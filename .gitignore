@@ -1,0 +1,8 @@
+# system files
+.DS_Store
+
+# large data folders
+download/
+results/
+figures/
+tables/
