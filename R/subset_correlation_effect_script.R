@@ -1,223 +1,187 @@
-library(CrossAncestryGenPhen)
-library(future)
- 
-# ======= Parallel environment =======
+## max. code width ============================================================
+## Libraries ==================================================================
+suppressPackageStartupMessages(
+  {
+    library(CrossAncestryGenPhen)
+  }
+)
+
+## Configs ====================================================================
+configs <- list.files(
+  fil.path("configs", "tcga"), 
+  pattern = "\\.json$", 
+  recursive  = TRUE, 
+  full.names = TRUE
+)
+
+## Parameters =================================================================
+seed <- 42
+
+# Parallel env.
 future::plan(multisession, workers = 2)
 
-
-# ======= DGE configurations =======
-configs <- list.files("configs", pattern = "\\.json$", recursive  = TRUE, full.names = TRUE)
-
-# ======= DGE loop =======
+## Loop: Ancestry-cancer combination ==========================================
 for (config_file in configs) {
 
+  # Read config
+  cfg <- jsonlite::read_json(config_file)
 
-  ## ==== Pipeline ====
-  tryCatch({
-    
-    ## --- Load config ---
-    cfg <- jsonlite::read_json(config_file)
-    message("\n================================================================================================================================")
-
-
-    ## --- Make dir ---
-    out_dir <- file.path(cfg$out_dir, "subset_correlation_effect", paste0(cfg$tech, "_", cfg$g1, "_vs_", cfg$g2, "_", cfg$a1, "_vs_", cfg$a2))
-    if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
-
-
-    ## --- Define results file ---
-    result_file <- file.path(out_dir, "dge_res.rds")
-
-
-    ## --- Check if results already exist ---
-    if (file.exists(result_file)) {
-      message("\nSkipping: '", config_file, "' — results already exist!")
-      message("Results file: ", result_file)
-      next  
-    }
-
-    ## --- Message ---
-    message("\nStudy: ", cfg$study, "  tech: ", cfg$tech, "  save: ", out_dir)
-
-
-    ## --- Load file ---
-    data <- readRDS(cfg$file)
-
-
-    ## --- Filter tech ---
-    data <- data[[cfg$tech]]
-
-
-    ## --- Filter sample type ---
-    s_col <- cfg$s_col; s1 <- cfg$s1; s2 <- cfg$s2
-
-    data <- filter_sample_type(
-      X = data$matr,
-      M = data$meta,
-      s_col = cfg$s_col,
-      s_levels = c(s1, s2)
+  # Output directory
+  out_dir <- file.path(
+    cfg$out_dir, 
+    "subset_correlation_effect", 
+    paste0(
+      cfg$tech, "_", 
+      cfg$g1, "_vs_", 
+      cfg$g2, "_", 
+      cfg$a1, "_vs_", 
+      cfg$a2
     )
+  )
+  if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
+  # Output file
+  result_file <- file.path(out_dir, "dge_res.rds")
+  if (file.exists(result_file)) {
+    message("\nSkipping: '", config_file, "' — results already exist!")
+    message("Results file: ", result_file)
+    next  
+  }
 
-    ## --- Filter by ancestry and phenotype ---
-    g_col <- cfg$g_col; g1 <- cfg$g1; g2 <- cfg$g2
-    a_col <- cfg$a_col; a1 <- cfg$a1; a2 <- cfg$a2
-    # Covariates
-    covariates <- unlist(cfg$covariates)
-    # Reproducibility
-    seed <- cfg$seed
+  # Read data
+  cat("Processing study:", cfg$study, cfg$tech, "\n")
+  data <- readRDS(cfg$file)
+  data <- data[[cfg$tech]]
 
-    study <- filter_phenotype_ancestry(
-      X = data$matr,
-      M = data$meta,
-      g_col = g_col,
-      a_col = a_col,
-      g_levels = c(g1, g2),
-      a_levels = c(a1, a2),
-      covariates = covariates,
-      omit_na = TRUE,
-      auto_cast = TRUE,
-      plot = FALSE,
-      verbose = TRUE
+  # Filter sample type
+  data <- filter_sample_type(
+    X = data$matr,
+    M = data$meta,
+    s_col = cfg$s_col,
+    s_levels = c(cfg$s1, cfg$s2),
+    verbose = FALSE
+  )
+
+  # Filter phenotype & ancestry
+  data <- filter_phenotype_ancestry(
+    X = data$matr, 
+    M = data$meta,
+    g_col = cfg$g_col, 
+    a_col = cfg$a_col,
+    g_levels = c(cfg$g1, cfg$g2),
+    a_levels = c(cfg$a1, cfg$a2),
+    covariates = unlist(cfg$covariates),
+    omit_na = TRUE,
+    auto_cast = TRUE,
+    plot = FALSE,
+    verbose = FALSE
+  )
+
+  # QC plot
+  ggsaveDK(
+    plot = data$p, 
+    file = file.path(out_dir, "imbalance.svg"),
+    trimmed = FALSE,
+    height = 4, 
+    width = 6
+  )
+  
+  # Filter features
+  if (cfg$tech == "mrna"){
+    data <- filter_by_expression(
+      X = data$X$matr,
+      Y = data$Y$matr,
+      MX = data$X$meta,
+      MY = data$Y$meta,
+      g_col = cfg$g_col,
+      a_col = cfg$a_col,
+      any_group = FALSE,
+      verbose = FALSE,
+      plot = FALSE
     )
-
-    # Save
-    ggsaveDK(
-      plot = study$p, 
-      file = file.path(out_dir, "imbalance.svg"),
-      trimmed = FALSE,
-      height = 4, 
-      width = 6
+  } else if (cfg$tech == "meth") {
+    data <- filter_by_methylation(
+      X = data$X$matr,
+      Y = data$Y$matr,
+      MX = data$X$meta,
+      MY = data$Y$meta,
+      g_col = cfg$g_col,
+      a_col = cfg$a_col,
+      any_group = FALSE,
+      verbose = FALSE,
+      plot = FALSE
     )
+  }
 
-    ## --- Filter features ---
-    if (cfg$tech == "mrna"){
-      study <- filter_by_expression(
-        X = study$X$matr,
-        Y = study$Y$matr,
-        MX = study$X$meta,
-        MY = study$Y$meta,
-        g_col = g_col,
-        a_col = a_col,
-        any_group = FALSE,
-        verbose = TRUE,
-        plot = FALSE
-      )
-    } else if (cfg$tech == "meth") {
-      study <- filter_by_methylation(
-        X = study$X$matr,
-        Y = study$Y$matr,
-        MX = study$X$meta,
-        MY = study$Y$meta,
-        g_col = g_col,
-        a_col = a_col,
-        any_group = FALSE,
-        verbose = TRUE,
-        plot = FALSE
-      )
-    }
+  # QC plot
+  ggsaveDK(
+    plot = data$p, 
+    file = file.path(out_dir, "mean_variance.svg"), 
+    trimmed = FALSE,
+    height = 4, 
+    width = 10
+  )
 
-    # Save
-    ggsaveDK(
-      plot = study$p, 
-      file = file.path(out_dir, "mean_variance.svg"), 
-      trimmed = FALSE,
-      height = 4, 
-      width = 10
-    )
+  # Cluster
+  p <- plot_tsne_cluster(
+    X = data$X$matr,
+    Y = data$Y$matr,
+    MX = data$X$meta,
+    MY = data$Y$meta,
+    color_var = cfg$a_col,
+    shape_var = cfg$g_col,
+    cpm = if (cfg$tech  == "mrna") TRUE else FALSE,
+    mval = if (cfg$tech == "meth") TRUE else FALSE,
+    seed = seed
+  )
 
+  # QC plot
+  ggsaveDK(
+    plot = p, 
+    file = file.path(out_dir, "tsne_cluster.svg"), 
+    trimmed = FALSE,
+    height = 4, 
+    width = 10
+  )
 
-    ## --- Cluster ---
-    p <- plot_tsne_cluster(
-      X = study$X$matr,
-      Y = study$Y$matr,
-      MX = study$X$meta,
-      MY = study$Y$meta,
-      color_var = a_col,
-      shape_var = g_col,
-      cpm = if (cfg$tech  == "mrna") TRUE else FALSE,
-      mval = if (cfg$tech == "meth") TRUE else FALSE,
-      seed = seed
-    )
+  # Sample density
+  p <- plot_sample_density(
+    X = data$X$matr,
+    Y = data$Y$matr,
+    cpm = if (cfg$tech == "mrna") TRUE else FALSE,
+    mval = if (cfg$tech == "meth") TRUE else FALSE
+  )
 
-    # Save
-    ggsaveDK(
-      plot = p, 
-      file = file.path(out_dir, "tsne_cluster.svg"), 
-      trimmed = FALSE,
-      height = 4, 
-      width = 10
-    )
+  # QC plot
+  ggsaveDK(
+    plot = p, 
+    file = file.path(out_dir, "sample_density.svg"), 
+    trimmed = FALSE,
+    height = 6, 
+    width = 10
+  )
 
+  # Cor.
+  res <- subset_limma_correlation_effect(
+    X = if (cfg$tech == "mrna") data$X$matr else beta_to_mval(data$X$matr),
+    Y = if (cfg$tech == "mrna") data$Y$matr else beta_to_mval(data$Y$matr),
+    MX = data$X$meta,
+    MY = data$Y$meta,
+    g_col = cfg$g_col,
+    a_col = cfg$a_col,
+    covariates = unlist(cfg$covariates),
+    use_voom = if (cfg$tech == "mrna") TRUE else FALSE,
+    method = "pearson",
+    n_iter = 10,
+    seed = seed,
+    verbose = TRUE
+  )
 
-    ## --- Sample density ---
-    p <- plot_sample_density(
-      X = study$X$matr,
-      Y = study$Y$matr,
-      cpm = if (cfg$tech == "mrna") TRUE else FALSE,
-      mval = if (cfg$tech == "meth") TRUE else FALSE
-    )
+  res$summary_stats$method <- paste0("subset-pearson")
+  res$summary_stats$tech   <- cfg$tech
+  res$summary_stats$study  <- cfg$study
 
-    # Save
-    ggsaveDK(
-      plot = p, 
-      file = file.path(out_dir, "sample_density.svg"), 
-      trimmed = FALSE,
-      height = 6, 
-      width = 10
-    )
-
-
-    ## --- Correlation effect ---
-    method <- "pearson"
-    res <- subset_limma_correlation_effect(
-      X = if (cfg$tech == "mrna") study$X$matr else beta_to_mval(study$X$matr),
-      Y = if (cfg$tech == "mrna") study$Y$matr else beta_to_mval(study$Y$matr),
-      MX = study$X$meta,
-      MY = study$Y$meta,
-      g_col = g_col,
-      a_col = a_col,
-      covariates = covariates,
-      use_voom = if (cfg$tech == "mrna") TRUE else FALSE,
-      method = method,
-      n_iter = 10,
-      seed = seed,
-      verbose = TRUE
-    )
-    res$summary_stats$method  <- paste0("subset-", method)
-    res$summary_stats$tech    <- cfg$tech
-    res$summary_stats$study   <- cfg$study
-
-
-    ## --- Save ---
-    saveRDS(res, file = result_file)
-
-
-  ## --- Error message capture ---
-  }, error = function(e) {
-
-    ## --- Capture full error info --- 
-    full_err <- paste(capture.output({
-      cat("===== ERROR in ", config_file, " =====\n")
-      cat("Time: ", format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z"), "\n\n")
-      cat("Message:\n")
-      print(conditionMessage(e))
-      cat("\n\nCondition object:\n")
-      print(e)
-      cat("\n\nTraceback (most recent calls last):\n")
-      traceback()
-    }), collapse = "\n")
-
-    ## --- Create log dir ---
-    log_dir <- file.path(cfg$out_dir)
-    if (!dir.exists(log_dir)) dir.create(log_dir, recursive = TRUE)
-
-    ## --- Log file  ---
-    log_file <- file.path(log_dir, paste0("ERROR_", basename(config_file), ".txt"))
-    writeLines(full_err, log_file)
-
-    ## --- ERROR message ---
-    message("\nRROR in ", basename(config_file), " - see ", log_file)
-  })
+  # Save
+  saveRDS(res, file = result_file)
 }
 

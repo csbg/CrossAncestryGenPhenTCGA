@@ -1,0 +1,16 @@
+{
+  "study": "UCEC",
+  "out_dir": "results/tcga/analysis/TCGA_UCEC",
+  "file": "download/GDCportal/TCGA_UCEC/TCGA_UCEC_omics_layers.rds",
+  "tech": "mrna",
+  "s_col": "SAMPLE_TYPE",
+  "s1": "Normal",
+  "s2": "Primary",
+  "g_col": "SAMPLE_TYPE",
+  "g1": "Normal",
+  "g2": "Primary",
+  "a_col": "POOLED_GENETIC_ANCESTRY",
+  "a1": "EUR",
+  "a2": "AFR",
+  "covariates": ["AGE"]
+}
