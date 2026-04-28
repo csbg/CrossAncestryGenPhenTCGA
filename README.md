@@ -1,8 +1,10 @@
-# Portability of cancer subtype effects across genetic ancestries
+# Portability of cancer effects across genetic ancestries
 This github hosts the code for the publication: **insert link**
 
-The molecular data to run this script is downloaded from the GDC Data Portal: https://portal.gdc.cancer.gov
+## Data download
+The molecular data to run this script is downloaded from [GDC Data Portal](https://portal.gdc.cancer.gov). The data is downloaded using the [GDC Data Transfer Tool](https://gdc.cancer.gov/access-data/gdc-data-transfer-tool) with the manifest in configs/data/<study>. 
 
+## Requirements
 Before running these scripts, please install the **CrossAncestryGenPhen** package from GitHub.
 
 Link: https://github.com/DKatzlberger/CrossAncestryGenPhen
