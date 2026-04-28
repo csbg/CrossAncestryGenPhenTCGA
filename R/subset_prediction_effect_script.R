@@ -8,7 +8,7 @@ suppressPackageStartupMessages(
 
 ## Configs ====================================================================
 configs <- list.files(
-  fil.path("configs", "tcga"), 
+  file.path("configs", "tcga"), 
   pattern = "\\.json$", 
   recursive  = TRUE, 
   full.names = TRUE

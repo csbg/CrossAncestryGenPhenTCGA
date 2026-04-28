@@ -8,7 +8,7 @@ suppressPackageStartupMessages(
 
 ## Configs ====================================================================
 configs <- list.files(
-  fil.path("configs", "tcga"), 
+  file.path("configs", "tcga"), 
   pattern = "\\.json$", 
   recursive  = TRUE, 
   full.names = TRUE
@@ -17,19 +17,16 @@ configs <- list.files(
 ## Parameters =================================================================
 seed <- 42
 
-# Parallel env.
-future::plan(multisession, workers = 2)
-
 ## Loop: Ancestry-cancer combination ==========================================
 for (config_file in configs) {
-
+  
   # Read config
   cfg <- jsonlite::read_json(config_file)
 
   # Output directory
   out_dir <- file.path(
     cfg$out_dir, 
-    "subset_correlation_effect", 
+    "interaction_effect", 
     paste0(
       cfg$tech, "_", 
       cfg$g1, "_vs_", 
@@ -85,7 +82,7 @@ for (config_file in configs) {
     height = 4, 
     width = 6
   )
-  
+
   # Filter features
   if (cfg$tech == "mrna"){
     data <- filter_by_expression(
@@ -161,8 +158,8 @@ for (config_file in configs) {
     width = 10
   )
 
-  # Cor.
-  res <- subset_limma_correlation_effect(
+  # DGE
+  res <- limma_interaction_effect(
     X = if (cfg$tech == "mrna") data$X$matr else beta_to_mval(data$X$matr),
     Y = if (cfg$tech == "mrna") data$Y$matr else beta_to_mval(data$Y$matr),
     MX = data$X$meta,
@@ -171,17 +168,13 @@ for (config_file in configs) {
     a_col = cfg$a_col,
     covariates = unlist(cfg$covariates),
     use_voom = if (cfg$tech == "mrna") TRUE else FALSE,
-    method = "pearson",
-    n_iter = 10,
-    seed = seed,
-    verbose = TRUE
+    verbose = FALSE
   )
 
-  res$summary_stats$method <- paste0("subset-pearson")
-  res$summary_stats$tech   <- cfg$tech
-  res$summary_stats$study  <- cfg$study
+  res$method <- "limma-voom"
+  res$tech   <- cfg$tech
+  res$study  <- cfg$study
 
-  # Save
+  # Save 
   saveRDS(res, file = result_file)
 }
-

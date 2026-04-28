@@ -1,0 +1,20 @@
+{
+  "out_dir": "download/GDCportal/TCGA_BRCA",
+  "GDC": {
+    "manifest_file": "download/GDCportal/TCGA_BRCA/GDC_manifest_TCGA_BRCA_meth.txt",
+    "metadata_file": "download/GDCportal/TCGA_BRCA/GDC_metadata_TCGA_BRCA_meth.json",
+    "file_dir": "download/GDCportal/TCGA_BRCA/meth_files",
+    "download": false
+  },
+  "cBio": {
+    "study_id": "brca_tcga_pan_can_atlas_2018",
+    "vial": "first",
+    "plate": "first"
+  },
+  "meta_map": {
+    "map": "download/GDCportal/TCGA_BRCA/metadata_map.csv"
+  },
+  "demographics": {
+    "attributes": ["CANCER_TYPE", "SAMPLE_TYPE", "SUBTYPE", "POOLED_SUBTYPE", "SEX", "AGE"]
+  }
+}

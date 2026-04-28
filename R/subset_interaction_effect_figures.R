@@ -264,6 +264,69 @@ cor_safe <- function(x, y, n) {
   }
 }
 
+# Save heatmap
+save_heatmapsDK <- function(
+  plot,
+  file,
+  height,
+  width,
+  bg = "transparent",
+  dpi = NA,
+  unit = "cm",
+  ncol = 2
+) {
+  
+  # helper: convert to inches if needed
+  to_in <- function(x, unit) {
+    if (unit == "cm") return(x / 2.54)
+    if (unit == "mm") return(x / 25.4)
+    if (unit == "in") return(x)
+    stop("Unsupported unit: ", unit)
+  }
+  
+  width_in  <- to_in(width, unit)
+  height_in <- to_in(height, unit)
+  
+  # infer format
+  ext <- tools::file_ext(file)
+  
+  # open device
+  if (ext == "svg") {
+    svg(file, width = width_in, height = height_in)
+    
+  } else if (ext == "png") {
+    png(
+      file,
+      width = width_in,
+      height = height_in,
+      units = "in",
+      res = ifelse(is.na(dpi), 300, dpi),
+      bg = bg
+    )
+    
+  } else {
+    stop(paste("Unsupported format:", ext))
+  }
+  
+  heatmaps <- plot
+  n <- length(heatmaps)
+  nrow <- ceiling(n / ncol)
+  
+  pushViewport(viewport(layout = grid.layout(nrow, ncol)))
+  
+  for (i in seq_along(heatmaps)) {
+    row <- ceiling(i / ncol)
+    col <- i %% ncol
+    if (col == 0) col <- ncol
+    
+    pushViewport(viewport(layout.pos.row = row, layout.pos.col = col))
+    draw(heatmaps[[i]], newpage = FALSE)
+    upViewport()
+  }
+  
+  dev.off()
+}
+
 ## Colors =====================================================================
 
 ancestry_cols <- c(
@@ -343,8 +406,8 @@ subset_res <- rbindlist(lapply(names(res_dirs), function(study) {
 
 ## Main 3 =====================================================================
 
-# Define sig. threshold
 alpha <- 0.1
+formats <- c("svg", "png")
 
 ### Panel A -------------------------------------------------------------------
 
@@ -719,7 +782,9 @@ main3_panel_C <- ggplot(
     fill = effect_group
   )
 ) +
-geom_col() +
+geom_col(
+  na.rm = TRUE
+) +
 geom_text(
   data = effect_grps_pct$x_sum[
     study == "BRCA" & 
@@ -768,7 +833,7 @@ ggsaveDK(
   plot = main3_panel_C,
   file = file.path(
     fig_dir, 
-    "main2_panel_C.svg"),
+    "main3_panel_C.svg"),
   height = 6,
   width = 8,
   trimmed = FALSE,
@@ -889,7 +954,7 @@ main3_panel_D <- wrap_plots(
 
 # Save
 ggsaveDK(
-  plot = main2_panel_D,
+  plot = main3_panel_D,
   file = file.path(
     fig_dir, 
     "main3_panel_D.svg"
@@ -950,7 +1015,7 @@ data_expr <- effect_grps_pct$x_sig[
   feature %in% feats,
   .(study, tech, phenotype, a_2, feature, effect_group)
 ][
-  subset_interaction[
+  subset_res[
     coef_id == "interaction" &
     study == "BRCA" &
     tech == "mrna" &
@@ -1066,7 +1131,7 @@ main3_panel_E <- ggplot(
   )
 ) +
 geom_rect(
-  data_expr = unique(
+  data = unique(
     data_expr[
       p_adj < 0.1, 
       .(feature, x, effect_group)
@@ -1199,7 +1264,8 @@ geom_col(
   ),
   width = 0.7,
   color = "black",
-  linewidth = 0.1
+  linewidth = 0.1,
+  na.rm = TRUE
 ) +
 scale_fill_manual(
   values = ancestry_cols
@@ -1352,6 +1418,7 @@ main3_supp1 <- wrap_plots(
     ),
     linewidth = 0.7,
     method = "lm",
+    formula = y ~ x,
     se = FALSE,
     color = "blue",
     inherit.aes = FALSE
@@ -1398,7 +1465,9 @@ main3_supp1 <- wrap_plots(
       fill = cor_type
     )
   ) +
-  geom_col() +
+  geom_col(
+    na.rm = TRUE
+  ) +
   facet_grid(
     cols = vars(tech),
       labeller = labeller(
@@ -1414,7 +1483,7 @@ main3_supp1 <- wrap_plots(
   labs(
     fill = "Ancestry",
     x = "Ancestry",
-    y = "Correlation # DEGs\n(Pearson)"
+    y = "Correlation (Pearson)"
   ) +
   theme_CrossAncestryGenPhen(
     legend_key = 1,
@@ -1425,95 +1494,148 @@ main3_supp1 <- wrap_plots(
     panel.spacing.y = unit(0.15, "lines"),
     legend.margin = margin(0, 0, 0, 0)
   ),
-  ncol = 1
-) + plot_layout(
-  guides = "collect",
-  heights = c(1, 0.5)
+  ncol = 2
 )
 
 # Save
-ggsaveDK(
-  plot = main3_supp1,
-  file = file.path(
-    fig_dir, 
-    "main3_supp1.svg"
-  ),
-  height = 7,
-  width = 7,
-  trimmed = FALSE,
-  bg = "transparent"
-)
+for (ext in formats) {
+  ggsaveDK(
+    plot = main3_supp1,
+    file = file.path(
+      fig_dir, 
+      paste0(
+        "main3_supp1.", 
+        ext
+      )
+    ),
+    height = 7,
+    width = 16,
+    trimmed = FALSE,
+    bg = "transparent",
+    dpi = 300
+  )
+}
 
 ### Supp. 2 -------------------------------------------------------------------
 
 # Plot
-main3_supp2 <- ggplot(
-  data = effect_grps_pct$x_sum[
-    , .(N = sum(N)), 
-    by = .(tech, cancer_dom, a_2, effect_group)
-  ][
-    , pct := 100 * N / sum(N), 
-    by = .(tech, cancer_dom, a_2)
-  ],
-  mapping = aes(
-    x = a_2, 
-    y = pct, 
-    fill = effect_group
-  )
-) +
-geom_col() +
-geom_text(
-  data = effect_grps_pct$x_sum[,
-    .(all_zero = all(pct == 0)),
-    by = .(cancer_dom, tech, a_2)
-  ][all_zero == TRUE],
-  mapping = aes(
-    x = a_2, 
-    label = "No differences"
+main3_supp2 <- wrap_plots(
+  ggplot(
+    data = effect_grps_pct$x_sum[
+      , .(x_sum = sum(N, na.rm = TRUE)),
+      by = .(tech, a_2, effect_group)
+    ],
+    mapping = aes(
+      x = effect_group,
+      y = x_sum,
+      fill = a_2
+    )
+  ) +
+  geom_col() +
+  scale_fill_manual(
+    values = ancestry_cols
+  ) +
+  facet_grid(
+    rows = vars(tech),
+    scales = "free",
+    space = "free",
+    labeller = labeller(
+      tech  = c(meth = "Methylation", mrna = "Expression")
+    )
+  ) +
+  labs(
+    fill = "Ancestry",
+    x = "Effect group",
+    y = "Nr. ancestry-specific genes\nper effect group"
+  ) +
+  theme_CrossAncestryGenPhen(
+    rotate = 45, 
+    show_borders = TRUE
+  ) +
+  theme(
+    strip.text.x = element_blank(),
+    panel.spacing.x = unit(0.15, "lines"),
+    panel.spacing.y = unit(0.15, "lines"),
+    legend.margin = margin(0, 0, 0, 0)
   ),
-  y = 50,
-  angle = 90,
-  hjust = 0.5,
-  vjust = 0.5,
-  size = 1.8,
-  inherit.aes = FALSE
-) +
-scale_fill_manual(
-  values = effect_grp_cols
-) +
-facet_grid(
-  rows = vars(cancer_dom),
-  cols = vars(tech),
-  labeller = labeller(
-    tech  = c(meth = "Methylation", mrna = "Expression")
-  )
-) +
-labs(
-  fill = NULL,
-  x = "Ancestry",
-  y = "Share of genes per effect group\n(% of genes with interaction effect)"
-) +
-theme_CrossAncestryGenPhen(
-  rotate = 45, 
-  show_borders = TRUE
-) +
-theme(
-  panel.spacing.x = unit(0.15, "lines"),
-  panel.spacing.y = unit(0.15, "lines"),
-  legend.margin = margin(0, 0, 0, 0)
+  ggplot(
+    data = effect_grps_pct$x_sum[
+      , .(N = sum(N)), 
+      by = .(tech, cancer_dom, a_2, effect_group)
+    ][
+      , pct := 100 * N / sum(N), 
+      by = .(tech, cancer_dom, a_2)
+    ],
+    mapping = aes(
+      x = a_2, 
+      y = pct, 
+      fill = effect_group
+    )
+  ) +
+  geom_col(
+    na.rm = TRUE
+  ) +
+  geom_text(
+    data = effect_grps_pct$x_sum[,
+      .(all_zero = all(pct == 0)),
+      by = .(cancer_dom, tech, a_2)
+    ][all_zero == TRUE],
+    mapping = aes(
+      x = a_2, 
+      label = "No differences"
+    ),
+    y = 50,
+    angle = 90,
+    hjust = 0.5,
+    vjust = 0.5,
+    size = 1.8,
+    inherit.aes = FALSE
+  ) +
+  scale_fill_manual(
+    values = effect_grp_cols
+  ) +
+  facet_grid(
+    rows = vars(cancer_dom),
+    cols = vars(tech),
+    labeller = labeller(
+      tech  = c(meth = "Methylation", mrna = "Expression")
+    )
+  ) +
+  labs(
+    fill = "Effect group",
+    x = "Ancestry",
+    y = "Share of genes per effect group\n(% of genes with interaction effect)"
+  ) +
+  theme_CrossAncestryGenPhen(
+    rotate = 45, 
+    show_borders = TRUE
+  ) +
+  theme(
+    panel.spacing.x = unit(0.15, "lines"),
+    panel.spacing.y = unit(0.15, "lines"),
+    legend.margin = margin(0, 0, 0, 0)
+  ),
+  ncol = 2
 )
 
 # Save
-ggsaveDK(
-  plot = main3_supp2,
-  file = file.path(
-    fig_dir, 
-    "main3_supp2.svg"),
-  height = 6,
-  width = 8,
-  trimmed = FALSE,
-  bg = "transparent"
-)
+for (ext in formats) {
+  ggsaveDK(
+    plot = main3_supp2,
+    file = file.path(
+      fig_dir, 
+      paste0(
+        "main3_supp2.", 
+        ext
+      )
+    ),
+    height = 7,
+    width = 16,
+    trimmed = FALSE,
+    bg = "transparent",
+    dpi = 300
+  )
+}
 
 ### Supp. 3 -------------------------------------------------------------------
 
@@ -1596,32 +1718,20 @@ heatmaps <- lapply(names(split_list), function(grp) {
 })
 
 # Save
-svg(
-  file.path(
-    fig_dir,
-    "main3_supp3.svg"
-  ), 
-  width = 3, 
-  height = 3
-)
-
-n <- length(heatmaps)
-ncol <- 2
-nrow <- ceiling(n / ncol)
-
-pushViewport(viewport(layout = grid.layout(nrow, ncol)))
-
-for (i in seq_along(heatmaps)) {
-  row <- ceiling(i / ncol)
-  col <- i %% ncol
-  if (col == 0) col <- ncol
-  
-  pushViewport(viewport(layout.pos.row = row, layout.pos.col = col))
-  draw(heatmaps[[i]], newpage = FALSE)
-  upViewport()
+for (ext in formats) {
+  save_heatmapsDK(
+    plot = heatmaps,
+    file = file.path(
+      fig_dir, 
+      paste0("main3_supp3.", ext)
+    ),
+    height = 7,
+    width = 16,
+    ncol = 2,
+    bg = "transparent",
+    dpi = 300
+  )
 }
-
-dev.off()
 
 ### Supp. 4 -------------------------------------------------------------------
 
@@ -1638,7 +1748,9 @@ main3_supp4 <- ggplot(
     fill = a_2
   )
 ) +
-geom_col() +
+geom_col(
+  na.rm = TRUE
+) +
 scale_fill_manual(
   values = ancestry_cols
 ) +
@@ -1664,13 +1776,20 @@ theme(
 )
 
 # Save
-ggsaveDK(
-  plot = main3_supp4,
-  file = file.path(
-    fig_dir, 
-    "main3_supp4.svg"),
-  height = 6,
-  width = 8,
-  trimmed = FALSE,
-  bg = "transparent"
-)
+for (ext in formats) {
+  ggsaveDK(
+    plot = main3_supp4,
+    file = file.path(
+      fig_dir, 
+      paste0(
+        "main3_supp4.", 
+        ext
+      )
+    ),
+    height = 7,
+    width = 8,
+    trimmed = FALSE,
+    bg = "transparent",
+    dpi = 300
+  )
+}
