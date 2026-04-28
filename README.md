@@ -8,10 +8,10 @@ The molecular data to run this script is downloaded from [GDC Data Portal](https
 configs/ 
 └── data/ 
     ├── TCGA_BRCA/ 
-    │       ├── GDC_manifest_TCGA_BRCA_meth.txt     # Manifest file for methylation
-    │       ├── GDC_manifest_TCGA_BRCA_mrna.txt     # Manifest file for expression
-    │       ├── GDC_metadata_TCGA_BRCA_meth.json    # Metadata for methylation
-    │       ├── GDC_metadata_TCGA_BRCA_mrna.json    # Metadata for expression
+    │       ├── GDC_manifest_TCGA_BRCA_meth.txt     
+    │       ├── GDC_manifest_TCGA_BRCA_mrna.txt     
+    │       ├── GDC_metadata_TCGA_BRCA_meth.json    
+    │       ├── GDC_metadata_TCGA_BRCA_mrna.json    
     │       ├── config_meth.json                    # Config for script `gdc_process_mrna.R`
     │       └── config_mrna.json                    # Config for script `gdc_process_meth.R`
     ├── TCGA_THCA/ 
@@ -29,6 +29,8 @@ configs/
             ├── config_meth.json 
             └── config_mrna.json
 ```
+Once you have installed the `gdc-client`
+
 
 ## Requirements
 Before running these scripts, please install the **CrossAncestryGenPhen** package from GitHub.
