@@ -46,7 +46,7 @@ download/
          └── ...
 ```
 ## Data simulation
-Both data simulations (synthetic and permuted) were performed using patients from TCGA BRCA. The configs for these analysis are in *configs/sims/*.
+Both data simulations (synthetic and permuted) were performed using data from TCGA BRCA. The configs for these analysis are in *configs/sims/*.
 The scripts `sim_synthetic_script.R` and `sim_permutation_script.R` will use the same config files and create *results/sims/analysis*. The scripts `sim_synthetic_figures.R` and `sim_permutation_figures.R` will create the figures for the publication.
 ```
 results/ 
@@ -54,10 +54,12 @@ results/
     ├── analysis/ 
     │    ├── TCGA_BRCA/
     │    │    ├── permutation_sim/
-    │    │    │    ├── ...
+    │    │    │    ├── res_file1            # One res file per config
     │    │    │    └── ...
     │    │    │
     │    │    └── synthetic_sim/
+    │    │         ├── res_file1            # One res file per config
+    │    │         └── ...
     │    │
     │    └── TCGA_UCEC/ 
     │         └── ...
@@ -65,7 +67,32 @@ results/
     ├── figures/ 
     └── tables/
 ```
-
+## Differential expression and ML prediction
+Both analysis differntial expression and ML prediction use the same config files in *conigs/tcga/*.
+The scripts `subset_interaction_effect_script.R` and `subset_prediction_effect_script.R` will use the same config files and create *results/tcga/analysis*. 
+The scripts `subset_interaction_effect_figures.R` and `subset_prediction_effect_figures.R`will create the figures for the publication.
+```
+results/ 
+└── tcga/ 
+    ├── analysis/ 
+    │    ├── TCGA_BRCA/
+    │    │    ├── subset_interaction_effect/
+    │    │    │    ├── res_file1            # One res file per config
+    │    │    │    └── ...
+    │    │    │
+    │    │    └── subset_prediction_effect/
+    │    │         ├── res_file1            # One res file per config
+    │    │         └── ...
+    │    │
+    │    ├── TCGA_THCA/ 
+    │    │    └── ...
+    │    │
+    │    └── TCGA_UCEC/ 
+    │          └── ...
+    │
+    ├── figures/ 
+    └── tables/
+```
 ## Requirements
 Before running these scripts, please install the **CrossAncestryGenPhen** package from GitHub.
 
