@@ -89,7 +89,10 @@ for (config_file in configs) {
   # Save
   ggsaveDK(
     plot = p,
-    file = file.path(cfg$out_dir, "demo_mrna.png"),
+    file = file.path(
+      cfg$out_dir, 
+      "demo_mrna.png"
+    ),
     trimmed = FALSE,
     height = 10,
     width  = 20

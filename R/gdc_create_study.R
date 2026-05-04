@@ -1,26 +1,52 @@
-library(CrossAncestryGenPhen)
-
-# ===== Data =====
-# --- Methylation ---
-meth_layer <- gdc_omics_layer(
-  meta    = readRDS("download/GDCportal/TCGA_THCA/metadata_meth.rds"),
-  matr    = readRDS("download/GDCportal/TCGA_THCA/gene_level_matrix_meth.rds"),
-  id      = "SAMPLE_ID",
-  tech    = "meth",
-  verbose = TRUE
+## max. code width ============================================================
+## Libraries ==================================================================
+suppressPackageStartupMessages(
+  {
+    library(CrossAncestryGenPhen)
+  }
 )
 
-# --- Expression ---
-mrna_layer <- gdc_omics_layer(
-  meta    = readRDS("download/GDCportal/TCGA_THCA/metadata_mrna.rds"),
-  matr    = readRDS("download/GDCportal/TCGA_THCA/gene_level_matrix_mrna.rds"),
-  id      = "SAMPLE_ID",
-  tech    = "mrna",
-  verbose = TRUE
+## Study dirs =================================================================
+studies <- list.dirs(
+  file.path("download", "GDCportal"),
+  recursive = FALSE,
+  full.names = TRUE
 )
 
-# ===== Study =====
-study <- c(meth_layer, mrna_layer)
+## Loop: All studies ==========================================================
+for (study_dir in studies) {
 
-# Save
-saveRDS(study, file.path("download/GDCportal/TCGA_THCA", "TCGA_THCA_omics_layers.rds"))
+  # Meth
+  meth_layer <- gdc_omics_layer(
+    meta = readRDS(file.path(study_dir, "metadata_meth.rds")),
+    matr = readRDS(file.path(study_dir, "gene_level_matrix_meth.rds")),
+    id = "SAMPLE_ID",
+    tech = "meth",
+    verbose = FALSE
+  )
+
+  # Expr
+  mrna_layer <- gdc_omics_layer(
+    meta = readRDS(file.path(study_dir, "metadata_mrna.rds")),
+    matr = readRDS(file.path(study_dir, "gene_level_matrix_mrna.rds")),
+    id = "SAMPLE_ID",
+    tech = "mrna",
+    verbose = FALSE
+  )
+
+  # Combine into study
+  study_obj  <- c(meth_layer, mrna_layer)
+  study_name <- basename(study_dir)
+
+  # Save
+  saveRDS(
+    study_obj,
+    file = file.path(
+      study_dir, 
+      paste0(
+        study_name, 
+        "_omics_layers.rds"
+      )
+    )
+  )
+}
