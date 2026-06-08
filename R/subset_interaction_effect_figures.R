@@ -22,6 +22,12 @@ vs_newline <- function(x) {
   gsub("\\s*vs\\s*", " vs\n", x)
 }
 
+rename_phenotype <- function(x) {
+  x <- gsub("\\bLumA\\b", "Luminal A", x)
+  x <- gsub("\\bLumB\\b", "Luminal B", x)
+  x
+}
+
 # Interaction effect groups (Fortelny et al. 2024)
 group_effects <- function(x) {
   
@@ -448,11 +454,20 @@ write.csv(
   row.names = FALSE
 )
 
+# Save Excel
+openxlsx::write.xlsx(
+  nr_degs,
+  file = file.path(
+    tab_dir,
+    "main3_panel_A.xlsx"
+  )
+)
+
 # Plot
 main3_panel_A <- ggplot(
   mapping = aes(
     x = a_2, 
-    y = phenotype
+    y = rename_phenotype(phenotype)
   )
 ) +
 geom_tile(
@@ -505,7 +520,10 @@ facet_grid(
   scales = "free_y",
   space = "free_y",
   labeller = labeller(
-    tech = c(meth = "Methylation", mrna = "Expression")
+    tech = c(
+      meth = "Methylation", 
+      mrna = "Expression"
+    )
   )
 ) +
 labs(

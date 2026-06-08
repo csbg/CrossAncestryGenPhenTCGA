@@ -23,6 +23,12 @@ vs_newline <- function(x) {
   gsub("\\s*vs\\s*", " vs\n", x)
 }
 
+rename_phenotype <- function(x) {
+  x <- gsub("\\bLumA\\b", "Luminal A", x)
+  x <- gsub("\\bLumB\\b", "Luminal B", x)
+  x
+}
+
 # Save cor
 cor_safe <- function(x, y, n) {
   if (
@@ -111,8 +117,6 @@ pred_loss <- rbindlist(lapply(names(res_dirs), function(study) {
   # Add phenotype and study
   out <- rbindlist(fr)
   out[, phenotype := gsub("_", "-", paste(g_1, "vs", g_2))]
-  p <- unique(out$phenotype)
-  out[, phenotype := factor(phenotype, levels = c(p[grepl("^Normal", p)], p[!grepl("^Normal", p)]))]
   out[, study := study] 
   out
 }), use.names = TRUE, fill = TRUE)
@@ -133,8 +137,6 @@ pred_prob <- rbindlist(lapply(names(res_dirs), function(study) {
     # Output
     out <- rbindlist(dts)
     out[, phenotype := gsub("_", "-", paste(g_1, "vs", g_2))]
-    p <- unique(out$phenotype)
-    out[, phenotype := factor(phenotype, levels = c(p[grepl("^Normal", p)], p[!grepl("^Normal", p)]))]
     out[, study := study] 
     out
 }), use.names = TRUE, fill = TRUE)
@@ -155,8 +157,6 @@ pred_feat <- rbindlist(lapply(names(res_dirs), function(study) {
   # Add phenotype and study
   out <- rbindlist(dts)
   out[, phenotype := gsub("_", "-", paste(g_1, "vs", g_2))]
-  p <- unique(out$phenotype)
-  out[, phenotype := factor(phenotype, levels = c(p[grepl("^Normal", p)], p[!grepl("^Normal", p)]))]
   out[, study := study] 
   out
 }), use.names = TRUE, fill = TRUE)
@@ -196,17 +196,17 @@ main4_panel_B <- ggplot(
   ],
   mapping = aes(
     x = a_2,
-    y = phenotype,
-    fill = T_obs,
+    y = rename_phenotype(phenotype),
+    color = T_obs,
     size = -log10(p_adj)
   )
 ) +
 geom_point(
-  shape = 21,
-  color = "black",
-  stroke = 0.1
+  #shape = 21,
+  # color = "black",
+  # stroke = 0.1
 ) +
-scale_fill_gradient2(
+scale_color_gradient2(
   name = "Log2FC of loss\n(non-EUR / EUR)  ",
   low  = "#4575b4",
   mid  = "white",
@@ -214,8 +214,8 @@ scale_fill_gradient2(
   midpoint = 0
 ) +
 scale_size_continuous(
-  name = expression(P.adj ~ "(-log"[10] * ")  "),
-  range = c(2, 3.5),
+  name = expression(P.adj ~ "-log"[10] * ""),
+  range = c(0.5, 2),
   breaks = scales::pretty_breaks(n = 3)
 ) +
 facet_grid(
@@ -315,6 +315,23 @@ pred_AUC <- pred_prob[
   set := factor(set, levels = c("Validation", "Inference"))
 ]
 
+pred_AUC[
+  ,
+  phenotype_plot := vs_newline(
+    rename_phenotype(phenotype)
+  )
+][
+  ,
+  phenotype_plot := factor(
+    phenotype_plot,
+    levels = c(
+      "Normal vs\nPrimary",
+      "Basal vs\nnon-Basal",
+      "Luminal A vs\nLuminal B"
+    )
+  )
+]
+
 # Plot
 main4_panel_C <- ggplot(
   mapping = aes(
@@ -383,7 +400,7 @@ scale_y_continuous(
   breaks = scales::pretty_breaks(n = 3)
 ) +
 facet_grid(
-  cols = vars(phenotype),
+  cols = vars(phenotype_plot),
   rows = vars(tech),
   scales = "free",
   space = "free",
@@ -451,7 +468,7 @@ overlap <- pred_feat[
 main4_panel_D <- ggplot(
   mapping = aes(
     x = a_2,
-    y = phenotype
+    y = rename_phenotype(phenotype)
   )
 ) +
 geom_tile(
@@ -484,7 +501,7 @@ geom_tile(
   linewidth = 0.1
 ) +
 scale_fill_gradient(
-  name  = "Recall",
+  name  = "Recall of\nancestry-specific\ngenes",
   low   = "white",
   high  = "gold",
   guide = guide_colorbar(order = 1)
@@ -500,7 +517,7 @@ facet_grid(
 ) +
 labs(
   x = "Ancestry",
-  y = "Cancer relationship"
+  y = "Cancer comparison"
 ) +
 theme_CrossAncestryGenPhen(
   legend_key = 1,
@@ -666,7 +683,7 @@ main4_panel_E <- wrap_plots(
     midpoint = 0
   ) +
   scale_size_continuous(
-    name = expression(P.adj ~ "(-log"[10] * ")  "),
+    name = expression(P.adj ~ "-log"[10] * ""),
     range = c(0.5, 1.8)
   ) +
   facet_grid(
