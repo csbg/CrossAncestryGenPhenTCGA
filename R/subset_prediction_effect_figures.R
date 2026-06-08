@@ -899,6 +899,15 @@ main4_supp1 <- wrap_plots(
     legend.margin = margin(0, 0, 0, 0)
   ),
   ncol = 2
+) + plot_annotation(
+  tag_levels = "a"
+) &
+theme(
+  plot.tag = element_text(
+    face = "bold",
+    size = 10
+  ),
+  plot.tag.position = c(0, 1)
 )
 
 # Save

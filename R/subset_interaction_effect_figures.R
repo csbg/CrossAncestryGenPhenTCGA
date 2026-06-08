@@ -319,8 +319,22 @@ save_heatmapsDK <- function(
     col <- i %% ncol
     if (col == 0) col <- ncol
     
-    pushViewport(viewport(layout.pos.row = row, layout.pos.col = col))
+    pushViewport(
+      viewport(
+        layout.pos.row = row,
+        layout.pos.col = col
+      )
+    )
+
     draw(heatmaps[[i]], newpage = FALSE)
+
+    grid::grid.text(
+      letters[i],
+      x = unit(2, "mm"),
+      y = unit(1, "npc") - unit(2, "mm"),
+      just = c("left", "top"),
+      gp = gpar(fontsize = 10, fontface = "bold")
+    )
     upViewport()
   }
   
@@ -1307,6 +1321,77 @@ ggsaveDK(
   bg = "transparent"
 )
 
+# Plot
+main3_panel_F.1 <- ggplot(
+  data = data_fgsea[
+    study == "BRCA" & 
+    phenotype == "Basal vs non-Basal" &
+    padj < 0.05
+  ][
+    order(-abs(NES))
+  ][,
+    head(.SD, 7),
+    by = .(phenotype, tech, a_2)
+  ],
+  mapping = aes(
+    x = a_2,
+    y = reorder(pathway, NES),
+    color = NES,
+    size = -log10(padj)
+  )
+) +
+geom_point() +
+scale_size_continuous(
+  name = expression(P.adj ~ "-log"[10] * ""),
+  breaks = scales::pretty_breaks(n = 4),
+  range = c(0.5, 1.8)
+) +
+scale_color_gradient2(
+  high = "purple",
+  mid = "white",
+  low = "forestgreen"
+) +
+facet_grid(
+  rows = vars(tech),
+  scales = "free_y",
+  space = "free",
+  labeller = labeller(
+    tech = c(
+      meth = "Methylation", 
+      mrna = "Expression"
+    )
+  )
+) +
+labs(
+ color = "NES",
+ x = "Ancestry",
+ y = "Hallmark pathway"
+) +
+theme_CrossAncestryGenPhen(
+  legend_key = 1,
+  rotate = 45,
+  show_border = TRUE,
+  show_grid = FALSE
+) +
+theme(
+  panel.spacing.x = unit(0.15, "lines"),
+  panel.spacing.y = unit(0.15, "lines"),
+  legend.margin = margin(0, 0, 0, 0)
+)
+
+# Save
+ggsaveDK(
+  plot = main3_panel_F.1,
+  file = file.path(
+    fig_dir, 
+    "main3_panel_F.1.svg"
+  ),
+  height = 6,
+  width = 7,
+  trimmed = FALSE,
+  bg = "transparent"
+)
+
 ### Supp. 1 -------------------------------------------------------------------
 
 # DEGs per coef
@@ -1444,8 +1529,8 @@ main3_supp1 <- wrap_plots(
   ) +
   labs(
     color = "Ancestry",
-    x = "# baseline DEGs",
-    y = "# interaction DEGs",
+    x = "Nr. of significant genes within cancer subtype\n(the ancestry baseline effect)",
+    y = "Nr. of significant ancestry-specific genes\n(the interaction effect)",
   ) +
   theme_CrossAncestryGenPhen(
     legend_key = 1,
@@ -1483,7 +1568,7 @@ main3_supp1 <- wrap_plots(
   labs(
     fill = "Ancestry",
     x = "Ancestry",
-    y = "Correlation (Pearson)"
+    y = "Pearson correlation of\nnr. baseline genes vs. nr. interaction genes"
   ) +
   theme_CrossAncestryGenPhen(
     legend_key = 1,
@@ -1495,6 +1580,15 @@ main3_supp1 <- wrap_plots(
     legend.margin = margin(0, 0, 0, 0)
   ),
   ncol = 2
+) + plot_annotation(
+  tag_levels = "a"
+) &
+theme(
+  plot.tag = element_text(
+    face = "bold",
+    size = 10
+  ),
+  plot.tag.position = c(0, 1)
 )
 
 # Save
@@ -1508,7 +1602,7 @@ for (ext in formats) {
         ext
       )
     ),
-    height = 7,
+    height = 8,
     width = 16,
     trimmed = FALSE,
     bg = "transparent",
@@ -1616,6 +1710,15 @@ main3_supp2 <- wrap_plots(
     legend.margin = margin(0, 0, 0, 0)
   ),
   ncol = 2
+) + plot_annotation(
+  tag_levels = "a"
+) &
+theme(
+  plot.tag = element_text(
+    face = "bold",
+    size = 10
+  ),
+  plot.tag.position = c(0, 1)
 )
 
 # Save
@@ -1629,7 +1732,7 @@ for (ext in formats) {
         ext
       )
     ),
-    height = 7,
+    height = 8,
     width = 16,
     trimmed = FALSE,
     bg = "transparent",
@@ -1693,8 +1796,8 @@ heatmaps <- lapply(names(split_list), function(grp) {
     cluster_rows = TRUE,
     cluster_columns = TRUE,
     # Dims
-    width = unit(1, "cm"),
-    height = unit(1, "cm"),
+    width = unit(2.5, "cm"),
+    height = unit(2.5, "cm"),
     # Legend params
     heatmap_legend_param = list(
       at = c(-1, 0 ,1),
@@ -1725,7 +1828,7 @@ for (ext in formats) {
       fig_dir, 
       paste0("main3_supp3.", ext)
     ),
-    height = 7,
+    height = 9,
     width = 16,
     ncol = 2,
     bg = "transparent",
