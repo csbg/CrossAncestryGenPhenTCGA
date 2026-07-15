@@ -5,6 +5,8 @@ This github hosts the code for the publication: **insert link**
 Additional information for the reporting can be found in the directory **paper**.
 ```
 paper/ 
+├── reporting_summary.txt
+│
 ├── summary_subset_interaction_effect/ 
 │   └── summary_sample_n.csv             # Number of samples per comaprison
 │
@@ -14,7 +16,7 @@ paper/
 └── summary_limma_interaction_effect/
     └── summary_sample_n.csv
 ```
-Same samples are used across all analysis. For subsetting analysis (subset_interaction_effect & subset_prediction_effect) the same subsets (same patient ids) are reused!
+Same samples are used across all analysis. For subsetting analysis (subset_interaction_effect_script.R & subset_prediction_effect_script.R) the same subsets (same patient ids) are reused!
 
 
 ## Data download

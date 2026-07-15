@@ -1,0 +1,55 @@
+================================================================================
+SECTION 1. SAMPLE SIZE (n) PER GROUP/CONDITION
+================================================================================
+
+A. Sample sizes per cancer comparsion (global):
+    The summary of the samlpe sizes used per comparison (ancestry and phenotype) can be found in the file: summary_sample_n.csv.
+    The scripts will create a plot 'imbalance.svg' which also showcases the sample numbers.
+
+B. Sample sizes within subsets
+    The algorithm draws subsets of EUR ancestry to math the group structure of the compared ancestry (non-EUR). 
+    Hence, the sample size per EUR-subset is the same as for the compared ancestry.
+
+C. Sample sizes in simulations -> Supplementary table 2
+    The sample sizes simulated in  'sim_synthetic_script.R' are reported in Supplementary table 2
+
+================================================================================
+SECTION 2. DISTINCT SAMPLES VS REPEATED MEASURES
+================================================================================
+
+As mentioned above some samples are reused and measured repeatedly for the subset algorithm.
+These samples are drawn randomly but match the sample size of the comapred ancestry (non-EUR).
+
+For the 'limma_interaction_effect_script.R' no subsettting was performed but all samples are used at once.
+
+================================================================================
+SECTION 3. STATISTICAL METHODS AND INFERENCE
+================================================================================
+
+'subset_interaction_effect_script.R' & 'limma_interaction_effect_script.R' use the software limma-voom. 
+We reported genes significant genes at FDR 10% using BH correction.
+
+'subset_prediction_effect_figures.R' uses an empirical two sided p-value across the distribution of the loss fraction across subset.
+The p-values were corrected using BH correction.
+
+In simualtions we corrected p-values sing BH correction and reprted genes significant at FDR 5%.
+
+================================================================================
+SECTION 4. COVARIATES TESTED / STRATIFICATION VARIABLES
+================================================================================
+
+Within the configs folder all settings for the analysis are listed. Always the interaction betwwen the g_col (cancer) and the a_col (ancestry) where of interest.
+However, in all cases we corrected for age and for some cancers for sex (TCGA-THCA).
+
+================================================================================
+SECTION 5. ASSUMPTIONS AND CORRECTIONS
+================================================================================
+
+For the simulations we assumed bulk RNA-seq counts to follow a negative binomial distribution (compcodeR).
+All p-values were corrected using BH correction.
+
+================================================================================
+SECTION 6. INFERENCE REPORTING
+================================================================================
+
+Referring to methods section and supplementary materials
