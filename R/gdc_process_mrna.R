@@ -79,10 +79,19 @@ for (config_file in configs) {
     )
   )
 
+  write.csv(
+    file_map, 
+    file = file.path(
+      cfg$out_dir, 
+      "metadata_mrna.csv"
+    ),
+    row.names = FALSE
+  )
+
   # Plot
   p <- plot_gdc_demographics(
     file_map = file_map,
-    attributes = cfg$demographics$attributes,
+    attributes = unlist(cfg$demographics$attributes),
     facetting = "POOLED_GENETIC_ANCESTRY"
   )
 

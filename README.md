@@ -1,6 +1,22 @@
 # Portability of cancer effects across genetic ancestries
 This github hosts the code for the publication: **insert link**
 
+## Reporting summary
+Additional information for the reporting can be found in the directory **paper**.
+```
+paper/ 
+├── summary_subset_interaction_effect/ 
+│   └── summary_sample_n.csv             # Number of samples per comaprison
+│
+├── summary_subset_prediction_effect/
+│   └── summary_sample_n.csv  
+│
+└── summary_limma_interaction_effect/
+    └── summary_sample_n.csv
+```
+Same samples are used across all analysis. For subsetting analysis (subset_interaction_effect & subset_prediction_effect) the same subsets (same patient ids) are reused!
+
+
 ## Data download
 The molecular data to run this script is downloaded from [GDC Data Portal](https://portal.gdc.cancer.gov) using the [GDC Data Transfer Tool](https://gdc.cancer.gov/access-data/gdc-data-transfer-tool) with the **manifest.txt**, **metadata.json** and the corresponding **config_<molecular_level>.json** files in *configs/data/*. 
 ```

@@ -74,8 +74,17 @@ for (config_file in configs) {
     file_map, 
     file = file.path(
       cfg$out_dir, 
-      "metadata_mrna.rds"
+      "metadata_meth.rds"
     )
+  )
+
+    write.csv(
+    file_map, 
+    file = file.path(
+      cfg$out_dir, 
+      "metadata_meth.csv"
+    ),
+    row.names = FALSE
   )
 
   # Plot
@@ -90,7 +99,7 @@ for (config_file in configs) {
     plot = p,
     file = file.path(
       cfg$out_dir, 
-      "demo_mrna.png"
+      "demo_meth.png"
     ),
     trimmed = FALSE,
     height = 10,

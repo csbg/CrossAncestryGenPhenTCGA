@@ -12,5 +12,5 @@
   "a_col": "POOLED_GENETIC_ANCESTRY",
   "a1": "EUR",
   "a2": "ADMIX",
-  "covariates": ["AGE"],
+  "covariates": ["AGE"]
 }

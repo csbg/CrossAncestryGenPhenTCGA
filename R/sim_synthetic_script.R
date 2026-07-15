@@ -5,6 +5,7 @@ suppressPackageStartupMessages(
     library(CrossAncestryGenPhen)
     library(data.table)
     library(patchwork)
+    library(openxlsx)
     library(ggplot2)
     library(future)
   }
@@ -69,35 +70,48 @@ n_jobs <- length(configs)
 future::plan(multisession, workers = n_jobs)
 
 # Simulation configs 
-# sim_grid <- setDT(
-#     sim_make_grid(
-#     # Simulations
-#     n_samples = c(1000),
-#     n_degs = c(0, 500, 1000),
-#     log2fc = c(0, 1, 2),
-#     # Imbalancing
-#     total_samples = c(100, 500, 1000),
-#     between_ratio = c(1, 5, 10),
-#     within_ratio = c(1, 5, 10),
-#     zero_rules = TRUE,  # Only run one negative control simulation (don't expand grid where n_degs = 0 to more then one row)
-#     verbose = TRUE   
-#   )
-# )
-
 sim_grid <- setDT(
     sim_make_grid(
     # Simulations
-    n_samples = c(50),
-    n_degs = c(500),
-    log2fc = c(1),
+    n_samples = c(1000),
+    n_degs = c(0, 500, 1000),
+    log2fc = c(0, 1, 2),
     # Imbalancing
-    total_samples = c(40),
-    between_ratio = c(1),
-    within_ratio = c(1),
-    zero_rules = TRUE,
-    verbose = FALSE   
+    total_samples = c(100, 500, 1000),
+    between_ratio = c(1, 5, 10),
+    within_ratio = c(1, 5, 10),
+    zero_rules = TRUE,  # Only run one negative control simulation (don't expand grid where n_degs = 0 to more then one row)
+    verbose = TRUE   
   )
 )
+
+# Save
+write.xlsx(
+  sim_grid,
+  file = file.path(
+    "results", 
+    "sims",
+    "tables",
+    "grid_summary.xlsx"
+  ),
+  rowNames = FALSE
+)
+
+
+# sim_grid <- setDT(
+#     sim_make_grid(
+#     # Simulations
+#     n_samples = c(50),
+#     n_degs = c(500),
+#     log2fc = c(1),
+#     # Imbalancing
+#     total_samples = c(40),
+#     between_ratio = c(1),
+#     within_ratio = c(1),
+#     zero_rules = TRUE,
+#     verbose = FALSE   
+#   )
+# )
 
 ## Loop (NB sim. -> imbalance -> DGE) =========================================
 for (config_file in configs) {

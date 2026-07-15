@@ -18,26 +18,29 @@ configs <- list.files(
 seed <- 42
 
 # Parallel env.
-future::plan(multisession, workers = 2)
+future::plan(future::multisession, workers = 2)
 
 ## Loop: Ancestry-cancer combination ==========================================
+all_n_list <- list()
 for (config_file in configs) {
   
   # Read config
-  cfg <- jsonlite::read_json(config_file)
+  cfg  <- jsonlite::read_json(config_file)
+  comp <-  paste0(
+    cfg$tech, "_", 
+    cfg$g1, "_vs_",  
+    cfg$g2, "_", 
+    cfg$a1, "_vs_", 
+    cfg$a2
+  )
 
   # Output directory
   out_dir <- file.path(
     cfg$out_dir, 
     "subset_interaction_effect", 
-    paste0(
-      cfg$tech, "_", 
-      cfg$g1, "_vs_", 
-      cfg$g2, "_", 
-      cfg$a1, "_vs_", 
-      cfg$a2
-    )
+    comp
   )
+
   if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
   # Output file
@@ -85,6 +88,38 @@ for (config_file in configs) {
     height = 4, 
     width = 6
   )
+
+  # Sample sizes (n)
+  .get_n <- function(meta, g_col, a_col) {
+    
+    g_groups <- unique(na.omit(meta[[g_col]]))
+    g_counts <- sapply(g_groups, function(g) sum(meta[[g_col]] == g, na.rm = TRUE))
+    ancestry_label <- unique(na.omit(meta[[a_col]]))[1]
+    
+    data.frame(
+      a_col = ancestry_label,
+      g_col = as.character(g_groups),
+      n     = as.numeric(g_counts)
+    )
+  }
+
+  n_X <- .get_n(meta = data$X$meta, g_col = cfg$g_col, a_col = cfg$a_col)
+  n_Y <- .get_n(meta = data$Y$meta, g_col = cfg$g_col, a_col = cfg$a_col)
+  final_n <- rbind(n_X, n_Y)
+  
+  # Add meta
+  final_n$study <- cfg$study
+  final_n$tech  <- cfg$tech
+  final_n$comp  <- comp
+
+  # Save
+  write.csv(
+    final_n, 
+    file = file.path(out_dir, "sample_n.csv"), 
+    row.names = FALSE
+  )
+
+  all_n_list[[config_file]] <- final_n
 
   # Filter features
   if (cfg$tech == "mrna"){
@@ -183,4 +218,22 @@ for (config_file in configs) {
 
   # Save
   saveRDS(res, file = result_file)
+}
+
+# Summary
+if (length(all_n_list) > 0) {
+  
+  all_n   <- do.call(rbind, all_n_list)
+
+  out_dir <- file.path("results/tcga/analysis/summary_subset_interaction_effect")
+  if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
+  
+  write.csv(
+    all_n,
+    file = file.path(
+      out_dir,
+      "summary_sample_n.csv"
+    ), 
+    row.names = FALSE
+  )
 }

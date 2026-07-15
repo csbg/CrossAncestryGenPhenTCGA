@@ -7,6 +7,7 @@ suppressPackageStartupMessages(
     library(data.table)
     library(ggnewscale)
     library(patchwork)
+    library(openxlsx)
     library(circlize)
     library(ggplot2)
     library(msigdbr)
@@ -428,6 +429,65 @@ subset_res <- rbindlist(lapply(names(res_dirs), function(study) {
 
 alpha <- 0.1
 formats <- c("svg", "png")
+
+### Excel sheet ---------------------------------------------------------------
+
+for (tech_name in c("mrna", "meth")) {
+
+  wb <- createWorkbook()
+
+  dt_tech <- subset_res[
+    tech == tech_name
+  ]
+
+  dt_tech[, interaction_id := paste(
+    g_1,
+    g_2,
+    a_1,
+    a_2,
+    sep = "__"
+  )]
+
+  groups <- split(
+    dt_tech,
+    dt_tech$interaction_id
+  )
+
+  for (nm in names(groups)) {
+
+    dt <- groups[[nm]]
+    dt <- dt[p_adj < 0.1]
+
+    sheet_name <- paste(
+      unique(dt$g_1),
+      "vs",
+      unique(dt$g_2),
+      unique(dt$a_2),
+      sep = "_"
+    )
+
+    sheet_name <- gsub("[\\[\\]\\*\\?/\\\\:]", "_", sheet_name)
+    sheet_name <- substr(sheet_name, 1, 31)
+
+    addWorksheet(wb, sheet_name)
+
+    writeData(
+      wb,
+      sheet = sheet_name,
+      x = dt
+    )
+  }
+
+  saveWorkbook(
+    wb,
+    file.path(
+      tab_dir,
+      paste0("significant_genes_", tech_name, ".xlsx")
+    ),
+    overwrite = TRUE
+  )
+}
+
 
 ### Panel A -------------------------------------------------------------------
 
