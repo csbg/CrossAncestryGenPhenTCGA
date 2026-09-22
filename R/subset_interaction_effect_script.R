@@ -6,6 +6,9 @@ suppressPackageStartupMessages(
   }
 )
 
+## Review process =============================================================
+review <- TRUE
+
 ## Configs ====================================================================
 configs <- list.files(
   file.path("configs", "tcga"), 
@@ -35,8 +38,14 @@ for (config_file in configs) {
   )
 
   # Output directory
+  if (review) {
+    out_dir <- sub("^results", "results_major_review", cfg$out_dir)
+  } else {
+    out_dir <- cfg$out_dir
+  }
+
   out_dir <- file.path(
-    cfg$out_dir, 
+    out_dir, 
     "subset_interaction_effect", 
     comp
   )
@@ -49,6 +58,9 @@ for (config_file in configs) {
     message("\nSkipping: '", config_file, "' — results already exist!")
     message("Results file: ", result_file)
     next  
+  } else {
+    message("\nProcessing: '", config_file)
+    message("Results file: ", result_file)
   }
 
   # Read data
@@ -142,7 +154,7 @@ for (config_file in configs) {
       MY = data$Y$meta,
       g_col = cfg$g_col,
       a_col = cfg$a_col,
-      any_group = FALSE,
+      any_group = TRUE, # Reviewer 1.07: Retain methylation sites based on variance within ancestry.
       verbose = FALSE,
       plot = FALSE
     )

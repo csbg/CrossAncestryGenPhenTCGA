@@ -17,7 +17,7 @@ C. Sample sizes in simulations -> Supplementary table 2
 SECTION 2. DISTINCT SAMPLES VS REPEATED MEASURES
 ================================================================================
 
-As mentioned above some samples are reused and measured repeatedly for the subset algorithm.
+Some samples are reused and measured repeatedly for the subset algorithm.
 These samples are drawn randomly but match the sample size of the comapred ancestry (non-EUR).
 
 For the 'limma_interaction_effect_script.R' no subsettting was performed but all samples are used at once.
@@ -32,13 +32,13 @@ We reported genes significant genes at FDR 10% using BH correction.
 'subset_prediction_effect_figures.R' uses an empirical two sided p-value across the distribution of the loss fraction across subset.
 The p-values were corrected using BH correction.
 
-In simualtions we corrected p-values sing BH correction and reprted genes significant at FDR 5%.
+In simualtions we corrected p-values sing BH correction and reported genes significant at FDR 5%.
 
 ================================================================================
 SECTION 4. COVARIATES TESTED / STRATIFICATION VARIABLES
 ================================================================================
 
-Within the configs folder all settings for the analysis are listed. Always the interaction betwwen the g_col (cancer) and the a_col (ancestry) where of interest.
+Within the configs folder all settings for the analysis are listed. Always the interaction between the g_col (cancer) and the a_col (ancestry) where of interest.
 However, in all cases we corrected for age and for some cancers for sex (TCGA-THCA).
 
 ================================================================================
@@ -52,4 +52,4 @@ All p-values were corrected using BH correction.
 SECTION 6. INFERENCE REPORTING
 ================================================================================
 
-Referring to methods section and supplementary materials
+Refering to methods section and supplementary materials

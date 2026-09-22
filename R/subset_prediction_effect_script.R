@@ -6,6 +6,9 @@ suppressPackageStartupMessages(
   }
 )
 
+## Review process =============================================================
+review <- TRUE
+
 ## Configs ====================================================================
 configs <- list.files(
   file.path("configs", "tcga"), 
@@ -25,7 +28,7 @@ all_n_list <- list()
 for (config_file in configs) {
   
   # Read config
-  cfg <- jsonlite::read_json(config_file)
+  cfg  <- jsonlite::read_json(config_file)
   comp <-  paste0(
     cfg$tech, "_", 
     cfg$g1, "_vs_",  
@@ -35,8 +38,14 @@ for (config_file in configs) {
   )
 
   # Output directory
+  if (review) {
+    out_dir <- sub("^results", "results_major_review", cfg$out_dir)
+  } else {
+    out_dir <- cfg$out_dir
+  }
+
   out_dir <- file.path(
-    cfg$out_dir, 
+    out_dir, 
     "subset_prediction_effect", 
     comp
   )
@@ -46,13 +55,15 @@ for (config_file in configs) {
   # Output file
   result_file <- file.path(out_dir, "dge_res.rds")
   if (file.exists(result_file)) {
-    message("\nSkipping: '", config_file, "' — results already exist!")
+    message("\nSkipping: ", config_file, " — results already exist!")
     message("Results file: ", result_file)
     next  
+  } else {
+    message("\nProcessing: ", config_file)
+    message("Results file: ", result_file)
   }
 
   # Read data
-  cat("Processing study:", cfg$study, cfg$tech, "\n")
   data <- readRDS(cfg$file)
   data <- data[[cfg$tech]]
 
@@ -112,7 +123,6 @@ for (config_file in configs) {
   final_n$tech  <- cfg$tech
   final_n$comp  <- comp
 
-
   # Save
   write.csv(
     final_n, 
@@ -143,7 +153,7 @@ for (config_file in configs) {
       MY = data$Y$meta,
       g_col = cfg$g_col,
       a_col = cfg$a_col,
-      any_group = FALSE,
+      any_group = TRUE, # Reviewer 1.07: Retain methylation sites based on variance within ancestry.
       verbose = FALSE,
       plot = FALSE
     )

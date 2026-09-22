@@ -1,0 +1,20 @@
+{
+  "out_dir": "download/GDCportal/TCGA_UCEC",
+  "GDC": {
+    "manifest_file": "configs/data/TCGA_UCEC/GDC_manifest_TCGA_UCEC_meth.txt",
+    "metadata_file": "configs/data/TCGA_UCEC/GDC_metadata_TCGA_UCEC_meth.json",
+    "file_dir": "download/GDCportal/TCGA_UCEC/meth_files",
+    "download": false
+  },
+  "cBio": {
+    "study_id": "ucec_tcga_pan_can_atlas_2018",
+    "vial": "first",
+    "plate": "first"
+  },
+  "meta_map": {
+    "map": "download/GDCportal/TCGA_UCEC/metadata_map.csv"
+  },
+  "demographics": {
+    "attributes": ["CANCER_TYPE", "SAMPLE_TYPE", "CANCER_TYPE_DETAILED", "POOLED_SUBTYPE", "SEX", "AGE"]
+  }
+}

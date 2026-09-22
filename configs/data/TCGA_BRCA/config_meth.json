@@ -1,8 +1,8 @@
 {
   "out_dir": "download/GDCportal/TCGA_BRCA",
   "GDC": {
-    "manifest_file": "download/GDCportal/TCGA_BRCA/GDC_manifest_TCGA_BRCA_meth.txt",
-    "metadata_file": "download/GDCportal/TCGA_BRCA/GDC_metadata_TCGA_BRCA_meth.json",
+    "manifest_file": "configs/data/TCGA_BRCA/GDC_manifest_TCGA_BRCA_meth.txt",
+    "metadata_file": "configs/data/TCGA_BRCA/GDC_metadata_TCGA_BRCA_meth.json",
     "file_dir": "download/GDCportal/TCGA_BRCA/meth_files",
     "download": false
   },

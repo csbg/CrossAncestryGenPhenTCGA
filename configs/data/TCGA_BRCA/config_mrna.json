@@ -1,8 +1,8 @@
 {
   "out_dir": "download/GDCportal/TCGA_BRCA",
   "GDC": {
-    "manifest_file": "download/GDCportal/TCGA_BRCA/GDC_manifest_TCGA_BRCA_mrna.txt",
-    "metadata_file": "download/GDCportal/TCGA_BRCA/GDC_metadata_TCGA_BRCA_mrna.json",
+    "manifest_file": "configs/data/TCGA_BRCA/GDC_manifest_TCGA_BRCA_mrna.txt",
+    "metadata_file": "configs/data/TCGA_BRCA/GDC_metadata_TCGA_BRCA_mrna.json",
     "file_dir": "download/GDCportal/TCGA_BRCA/mrna_files",
     "download": false
   },
