@@ -42,15 +42,110 @@ cor_safe <- function(x, y, n) {
   }
 }
 
+# Save heatmap
+save_heatmapsDK <- function(
+  plot,
+  file,
+  height,
+  width,
+  bg = "transparent",
+  dpi = NA,
+  unit = "cm",
+  ncol = 2
+) {
+  
+  # helper: convert to inches if needed
+  to_in <- function(x, unit) {
+    if (unit == "cm") return(x / 2.54)
+    if (unit == "mm") return(x / 25.4)
+    if (unit == "in") return(x)
+    stop("Unsupported unit: ", unit)
+  }
+  
+  width_in  <- to_in(width, unit)
+  height_in <- to_in(height, unit)
+  
+  # infer format
+  ext <- tools::file_ext(file)
+  
+  # open device
+  if (ext == "svg") {
+    svg(file, width = width_in, height = height_in)
+    
+  } else if (ext == "png") {
+    png(
+      file,
+      width = width_in,
+      height = height_in,
+      units = "in",
+      res = ifelse(is.na(dpi), 300, dpi),
+      bg = bg
+    )
+    
+  } else {
+    stop(paste("Unsupported format:", ext))
+  }
+  
+  heatmaps <- plot
+  n <- length(heatmaps)
+  nrow <- ceiling(n / ncol)
+  
+  pushViewport(viewport(layout = grid.layout(nrow, ncol)))
+  
+  for (i in seq_along(heatmaps)) {
+    row <- ceiling(i / ncol)
+    col <- i %% ncol
+    if (col == 0) col <- ncol
+    
+    pushViewport(
+      viewport(
+        layout.pos.row = row,
+        layout.pos.col = col
+      )
+    )
+
+    draw(
+      heatmaps[[i]], 
+      merge_legends = FALSE,              
+      legend_grouping = "original",
+        
+      heatmap_legend_side = "right",       
+      annotation_legend_side = "bottom", 
+        
+      newpage = FALSE
+    )
+
+    grid::grid.text(
+      letters[i],
+      x = unit(2, "mm"),
+      y = unit(1, "npc") - unit(2, "mm"),
+      just = c("left", "top"),
+      gp = gpar(fontsize = 10, fontface = "bold")
+    )
+    upViewport()
+  }
+  
+  dev.off()
+}
+
 ## Colors =====================================================================
 
 ancestry_cols <- c(
-  "EUR" = "#0072B2",
-  "AFR" = "#D55E00",
-  "EAS" = "#56B4E9",
-  "AMR" = "#E69F00",
-  "SAS" = "#009E73",
+  "EUR"   = "#0072B2",
+  "AFR"   = "#D55E00",
+  "EAS"   = "#56B4E9",
+  "AMR"   = "#E69F00",
+  "SAS"   = "#009E73",
   "ADMIX" = "#999999"
+)
+
+phenotype_cols <- c(
+  "Basal vs non-Basal"      = "#c67aa3", 
+  "Luminal A vs Luminal B"  = "darkred", 
+  "Normal vs Primary"       = "#A65628", 
+  "Serous vs Endometrioid"  = "#414141", 
+  "Classical vs Follicular" = "#1B9E77", 
+  "M0 vs MX"                = "#d9c002"
 )
 
 ## Directories ================================================================
@@ -891,8 +986,11 @@ main4_supp1 <- wrap_plots(
   ) +
   facet_grid(
     cols = vars(tech),
-      labeller = labeller(
-        tech = c(meth = "Methylation", mrna = "Expression"),
+    labeller = labeller(
+      tech = c(
+        meth = "Methylation", 
+        mrna = "Expression"
+      ),
     )
   ) +
   scale_fill_manual(

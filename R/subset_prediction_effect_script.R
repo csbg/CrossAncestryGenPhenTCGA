@@ -6,9 +6,6 @@ suppressPackageStartupMessages(
   }
 )
 
-## Review process =============================================================
-review <- TRUE
-
 ## Configs ====================================================================
 configs <- list.files(
   file.path("configs", "tcga"), 
@@ -37,15 +34,8 @@ for (config_file in configs) {
     cfg$a2
   )
 
-  # Output directory
-  if (review) {
-    out_dir <- sub("^results", "results_major_review", cfg$out_dir)
-  } else {
-    out_dir <- cfg$out_dir
-  }
-
   out_dir <- file.path(
-    out_dir, 
+    cfg$out_dir, 
     "subset_prediction_effect", 
     comp
   )
@@ -153,7 +143,7 @@ for (config_file in configs) {
       MY = data$Y$meta,
       g_col = cfg$g_col,
       a_col = cfg$a_col,
-      any_group = TRUE, # Reviewer 1.07: Retain methylation sites based on variance within ancestry.
+      any_group = FALSE,
       verbose = FALSE,
       plot = FALSE
     )

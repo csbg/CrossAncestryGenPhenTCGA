@@ -6,6 +6,9 @@ suppressPackageStartupMessages(
   }
 )
 
+## Review process =============================================================
+review <- TRUE
+
 ## Configs ====================================================================
 configs <- list.files(
   file.path("configs", "tcga"), 
@@ -33,24 +36,26 @@ for (config_file in configs) {
     cfg$a1, "_vs_", 
     cfg$a2
   )
+  
 
   # Output directory
+  out_dir <- sub("^results", "results_major_review", cfg$out_dir)
   out_dir <- file.path(
-    cfg$out_dir, 
-    "subset_interaction_effect", 
+    out_dir, 
+    "subset_prediction_effect", 
     comp
   )
-
+  
   if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
   # Output file
   result_file <- file.path(out_dir, "dge_res.rds")
   if (file.exists(result_file)) {
-    message("\nSkipping: '", config_file, "' — results already exist!")
+    message("\nSkipping: ", config_file, " — results already exist!")
     message("Results file: ", result_file)
     next  
   } else {
-    message("\nProcessing: '", config_file)
+    message("\nProcessing: ", config_file)
     message("Results file: ", result_file)
   }
 
@@ -107,6 +112,9 @@ for (config_file in configs) {
 
   n_X <- .get_n(meta = data$X$meta, g_col = cfg$g_col, a_col = cfg$a_col)
   n_Y <- .get_n(meta = data$Y$meta, g_col = cfg$g_col, a_col = cfg$a_col)
+  if (min(n_X$n) < 2 || min(n_Y$n) < 2) {
+    next
+  }
   final_n <- rbind(n_X, n_Y)
   
   # Add meta
@@ -144,7 +152,7 @@ for (config_file in configs) {
       MY = data$Y$meta,
       g_col = cfg$g_col,
       a_col = cfg$a_col,
-      any_group = FALSE,
+      any_group = TRUE, # R1.07: Retain methylation sites based on variance within ancestry.
       verbose = FALSE,
       plot = FALSE
     )
@@ -198,23 +206,23 @@ for (config_file in configs) {
     width = 10
   )
 
-  # DGE
-  res <- subset_limma_interaction_effect(
-    X = if (cfg$tech == "mrna") data$X$matr else beta_to_mval(data$X$matr),
-    Y = if (cfg$tech == "mrna") data$Y$matr else beta_to_mval(data$Y$matr),
+  # Pred.
+  res <- subset_logistic_prediction_effect(
+    X = data$X$matr,
+    Y = data$Y$matr,
     MX = data$X$meta,
     MY = data$Y$meta,
     g_col = cfg$g_col,
     a_col = cfg$a_col,
-    covariates = unlist(cfg$covariates),
-    use_voom = if (cfg$tech == "mrna") TRUE else FALSE,
-    method = "cct",
+    n_folds = 5,
+    n_models = 5,
+    method = "auc",
     n_iter = 10,
     seed = seed,
     verbose = TRUE
   )
 
-  res$summary_stats$method <- "subset-cct"
+  res$summary_stats$method <- paste0("subset-auc")
   res$summary_stats$tech   <- cfg$tech
   res$summary_stats$study  <- cfg$study
 
@@ -222,20 +230,21 @@ for (config_file in configs) {
   saveRDS(res, file = result_file)
 }
 
-# Summary
-if (length(all_n_list) > 0) {
+# # Summary
+# if (length(all_n_list) > 0) {
   
-  all_n   <- do.call(rbind, all_n_list)
+#   all_n   <- do.call(rbind, all_n_list)
 
-  out_dir <- file.path("results/tcga/analysis/summary_subset_interaction_effect")
-  if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
+#   out_dir <- file.path("results_major_review/tcga/analysis/summary_subset_prediction_effect")
+#   if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
   
-  write.csv(
-    all_n,
-    file = file.path(
-      out_dir,
-      "summary_sample_n.csv"
-    ), 
-    row.names = FALSE
-  )
-}
+#   write.csv(
+#     all_n,
+#     file = file.path(
+#       out_dir,
+#       "summary_sample_n.csv"
+#     ), 
+#     row.names = FALSE
+#   )
+# }
+
