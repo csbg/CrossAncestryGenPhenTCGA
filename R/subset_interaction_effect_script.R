@@ -46,11 +46,11 @@ for (config_file in configs) {
   # Output file
   result_file <- file.path(out_dir, "dge_res.rds")
   if (file.exists(result_file)) {
-    message("\nSkipping: '", config_file, "' — results already exist!")
+    message("\nSkipping: ", config_file, " — results already exist!")
     message("Results file: ", result_file)
     next  
   } else {
-    message("\nProcessing: '", config_file)
+    message("\nProcessing: ", config_file)
     message("Results file: ", result_file)
   }
 

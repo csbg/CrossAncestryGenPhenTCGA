@@ -1,10 +1,22 @@
-# system files
-.DS_Store
+## max. code with =============================================================
 
-# large data folders
+# IDE settings
+.vscode/
+
+# R settings
+.Rprofile
+
+# Lib. managers
+.pixi/
+.renv/
+
+pixi.lock
+
+# Data dirs
 download/
 results/
 results_major_review/
-figures/
-tables/
 intern/
+
+# Extra dirs
+bash/

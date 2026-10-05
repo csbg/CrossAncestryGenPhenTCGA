@@ -63,13 +63,8 @@ configs <- list.files(
 )
 
 ## Parameters =================================================================
-seed   <- 42
-n_jobs <- length(configs)
+seed <- 42
 
-# Parallel env.
-future::plan(multisession, workers = n_jobs)
-
-# Simulation configs 
 sim_grid <- setDT(
     sim_make_grid(
     # Simulations
@@ -77,7 +72,7 @@ sim_grid <- setDT(
     n_degs = c(0, 500, 1000),
     log2fc = c(0, 1, 2),
     # Imbalancing
-    total_samples = c(100, 500, 1000),
+    total_samples = c(150, 500, 1000),
     between_ratio = c(1, 5, 10),
     within_ratio = c(1, 5, 10),
     zero_rules = TRUE,  # Only run one negative control simulation (don't expand grid where n_degs = 0 to more then one row)
@@ -85,29 +80,16 @@ sim_grid <- setDT(
   )
 )
 
-# Save
-write.xlsx(
-  sim_grid,
-  file = file.path(
-    "results", 
-    "sims",
-    "tables",
-    "grid_summary.xlsx"
-  ),
-  rowNames = FALSE
-)
-
-
 # sim_grid <- setDT(
 #     sim_make_grid(
 #     # Simulations
-#     n_samples = c(50),
+#     n_samples = c(200),
 #     n_degs = c(500),
 #     log2fc = c(1),
 #     # Imbalancing
-#     total_samples = c(40),
-#     between_ratio = c(1),
-#     within_ratio = c(1),
+#     total_samples = c(150), # 150 is the smallest possible sample size with 1/10 imbalance
+#     between_ratio = c(10),
+#     within_ratio = c(10),
 #     zero_rules = TRUE,
 #     verbose = FALSE   
 #   )
@@ -127,8 +109,9 @@ for (config_file in configs) {
   )
 
   # Output directory
+  out_dir <- sub("^results", "results_major_review", cfg$out_dir)
   out_dir <- file.path(
-    cfg$out_dir, 
+    out_dir, 
     "sim_synthetic", 
     comp
   )
@@ -138,11 +121,11 @@ for (config_file in configs) {
   # Output file
   result_file <- file.path(out_dir, "dge_res.rds")
   if (file.exists(result_file)) {
-    message("\nSkipping: '", config_file, "' — results already exist!")
+    message("\nSkipping: ", config_file, " — results already exist!")
     message("Results file: ", result_file)
     next  
   } else {
-    message("\nProcessing: '", config_file)
+    message("\nProcessing: '", config_file, "'")
     message("Results file: ", result_file)
   }
 
@@ -216,10 +199,10 @@ for (config_file in configs) {
   for (j in seq_len(nrow(sim_params_grid))) {
 
     # Define 'world population' params
-    cat(sprintf(" - sim. id: %d\n", j))
     n_samples <- sim_params_grid$n_samples[j]
     n_degs    <- sim_params_grid$n_degs[j]
     log2fc    <- sim_params_grid$log2fc[j]
+    message(sprintf("\nsim. id: %d [n: %-4s degs: %s logfc: %s]", j, n_samples, n_degs, log2fc))
 
     # Simulate (NB dist.)
     sim <- sim_4group_expression(
@@ -266,10 +249,10 @@ for (config_file in configs) {
     for (k in seq_len(nrow(imb_params_grid))) {
       
       # Define imbalance params
-      cat(sprintf("    imb. id: %d\n", k))
       total_samples <- imb_params_grid$total_samples[k]
       between_ratio <- imb_params_grid$between_ratio[k]
       within_ratio  <- imb_params_grid$within_ratio[k]
+      message(sprintf(" - imb. id: %d [n: %-4s a_col ratio: %-2s g_col ratio: %-2s]", k, total_samples, between_ratio, within_ratio))
 
       # Imbalance 'world population' (biased sampling)
       imb <- sim_imbalanced_ancestry(
@@ -291,7 +274,8 @@ for (config_file in configs) {
       # Benchmark DGE methods
       dge_methods <- list()
 
-      # Subset-limma
+      # Ancestry balanced
+      message("   limma  (ancestry)")
       subset_res_ <- subset_limma_interaction_effect(
         X = imb$X$matr,
         Y = imb$Y$matr,
@@ -299,6 +283,7 @@ for (config_file in configs) {
         MY = imb$Y$meta,
         g_col = "condition",
         a_col = "ancestry",
+        match = FALSE,
         covariates = NULL,
         use_voom = TRUE,
         n_iter = 10,
@@ -311,12 +296,54 @@ for (config_file in configs) {
       subset_res <- subset_res_$methods_stats
       for (m in names(subset_res)) {
         m_name <- paste0("subset-", m)
-        method_res  <- setDT(subset_res[[m]])
-        check_alignment(method_res, sim_truth, cols_check)
+
+        method_res <- setDT(subset_res[[m]])
+        method_res$strata <- "Ancestry\nsubset"
+
+        # Check and add
+        # setkeyv(method_res, cols_check)
+        # setkeyv(sim_truth, cols_check)
+
+        # check_alignment(method_res, sim_truth, cols_check)
+        dge_methods[[m_name]] <- method_res
+      }
+
+      # Ancestry + cancer balance
+      message("   limma  (ancestry + cancer)")
+      subset_res_ <- subset_limma_interaction_effect(
+        X = imb$X$matr,
+        Y = imb$Y$matr,
+        MX = imb$X$meta,
+        MY = imb$Y$meta,
+        g_col = "condition",
+        a_col = "ancestry",
+        match = TRUE,
+        covariates = NULL,
+        use_voom = TRUE,
+        n_iter = 10,
+        method = "mean",
+        seed = seed,
+        verbose = FALSE
+      )
+
+      # All p-value agg. methods
+      subset_res <- subset_res_$methods_stats
+      for (m in names(subset_res)) {
+        m_name <- paste0("subset-", m)
+
+        method_res <- setDT(subset_res[[m]])
+        method_res$strata <- "Ancestry + cancer\nsubset"
+
+        # Check and add
+        # setkeyv(method_res, cols_check)
+        # setkeyv(sim_truth, cols_check)
+
+        # check_alignment(method_res, sim_truth, cols_check)
         dge_methods[[m_name]] <- method_res
       }
 
       # Limma full
+      message("   limma  (imbalanced)")
       limma_full_res_ <- limma_interaction_effect(
         X = imb$X$matr,
         Y = imb$Y$matr,
@@ -328,10 +355,18 @@ for (config_file in configs) {
         use_voom = TRUE,
         verbose = FALSE
       )
-      check_alignment(setDT(limma_full_res_), sim_truth, cols_check)
+
+      limma_full_res_$strata <- "Imbalanced"
+
+      # Check and add
+      # setkeyv(method_res, cols_check)
+      # setkeyv(sim_truth, cols_check)
+
+      # check_alignment(setDT(limma_full_res_), sim_truth, cols_check)
       dge_methods[["limma-voom"]] <- setDT(limma_full_res_)
 
       # EdgeR full
+      message("   edger  (imbalanced)")
       edgeR_full_res_ <- edgeR_interaction_effect(
         X = imb$X$matr,
         Y = imb$Y$matr,
@@ -342,10 +377,18 @@ for (config_file in configs) {
         covariates = NULL,
         verbose = FALSE
       )
-      check_alignment(setDT(edgeR_full_res_), sim_truth, cols_check)
+
+      edgeR_full_res_$strata <- "Imbalanced"
+
+      # Check and add
+      # setkeyv(method_res, cols_check)
+      # setkeyv(sim_truth, cols_check)
+
+      # check_alignment(setDT(edgeR_full_res_), sim_truth, cols_check)
       dge_methods[["edgeR-QLFTest"]] <- setDT(edgeR_full_res_)
 
       # DESeq full
+      message("   deseq2 (imbalanced)")
       deseq_full_res_ <- DESeq_interaction_effect(
         X = imb$X$matr,
         Y = imb$Y$matr,
@@ -356,7 +399,14 @@ for (config_file in configs) {
         covariates = NULL,
         verbose = FALSE
       )
-      check_alignment(setDT(deseq_full_res_), sim_truth, cols_check)
+
+      deseq_full_res_$strata <- "Imbalanced"
+
+      # Check and add
+      # setkeyv(method_res, cols_check)
+      # setkeyv(sim_truth, cols_check)
+
+      # check_alignment(setDT(deseq_full_res_), sim_truth, cols_check)
       dge_methods[["DESeq2-Wald"]] <- setDT(deseq_full_res_)
 
       # Merge DEG res with truth

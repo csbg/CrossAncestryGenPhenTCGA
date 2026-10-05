@@ -10,5 +10,6 @@
   "g2": "Endometrioid",
   "a_col": "POOLED_GENETIC_ANCESTRY",
   "a1": "EUR",
-  "a2": "AFR"
+  "a2": "AFR",
+  "covariates": ["AGE"]
 }

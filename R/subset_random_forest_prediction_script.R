@@ -36,7 +36,7 @@ for (config_file in configs) {
 
   out_dir <- file.path(
     cfg$out_dir, 
-    "subset_prediction_effect", 
+    "subset_random_forest_prediction", 
     comp
   )
   
@@ -198,7 +198,7 @@ for (config_file in configs) {
   )
 
   # Pred.
-  res <- subset_logistic_prediction_effect(
+  res <- subset_random_forest_prediction(
     X = data$X$matr,
     Y = data$Y$matr,
     MX = data$X$meta,
@@ -208,7 +208,6 @@ for (config_file in configs) {
     n_folds = 5,
     n_models = 5,
     method = "auc",
-    n_iter = 10,
     seed = seed,
     verbose = TRUE
   )
@@ -226,7 +225,7 @@ if (length(all_n_list) > 0) {
   
   all_n   <- do.call(rbind, all_n_list)
 
-  out_dir <- file.path("results/tcga/analysis/summary_subset_prediction_effect")
+  out_dir <- file.path("results/tcga/analysis/summary_subset_random_forest_prediction")
   if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
   
   write.csv(

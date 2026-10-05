@@ -21,7 +21,7 @@ configs <- list.files(
 seed <- 42
 
 # Parallel env.
-future::plan(future::multisession, workers = 1)
+future::plan(future::multisession, workers = 2)
 
 ## Loop: Ancestry-cancer combination ==========================================
 all_n_list <- list()
@@ -36,15 +36,16 @@ for (config_file in configs) {
     cfg$a1, "_vs_", 
     cfg$a2
   )
+  
 
   # Output directory
   out_dir <- sub("^results", "results_major_review", cfg$out_dir)
   out_dir <- file.path(
     out_dir, 
-    "subset_interaction_effect", 
+    "subset_prediction_effect", 
     comp
   )
-
+  
   if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
   # Output file
@@ -115,7 +116,7 @@ for (config_file in configs) {
     next
   }
   final_n <- rbind(n_X, n_Y)
-
+  
   # Add meta
   final_n$study <- cfg$study
   final_n$tech  <- cfg$tech
@@ -205,24 +206,24 @@ for (config_file in configs) {
     width = 10
   )
 
-  # DGE
-  res <- subset_limma_interaction_effect(
-    X = if (cfg$tech == "mrna") data$X$matr else beta_to_mval(data$X$matr),
-    Y = if (cfg$tech == "mrna") data$Y$matr else beta_to_mval(data$Y$matr),
+  # Pred.
+  res <- subset_logistic_regression_prediction(
+    X = data$X$matr,
+    Y = data$Y$matr,
     MX = data$X$meta,
     MY = data$Y$meta,
     g_col = cfg$g_col,
     a_col = cfg$a_col,
     match = FALSE, # R1.09: Handles imbalances wihin cancer.
-    covariates = unlist(cfg$covariates),
-    use_voom = if (cfg$tech == "mrna") TRUE else FALSE,
-    method = "cct",
+    n_folds = 5,
+    n_models = 5,
+    method = "auc",
     n_iter = 10,
     seed = seed,
     verbose = TRUE
   )
 
-  res$summary_stats$method <- "subset-cct"
+  res$summary_stats$method <- paste0("subset-auc")
   res$summary_stats$tech   <- cfg$tech
   res$summary_stats$study  <- cfg$study
 
@@ -235,7 +236,7 @@ for (config_file in configs) {
   
 #   all_n   <- do.call(rbind, all_n_list)
 
-#   out_dir <- file.path("results_major_review/tcga/analysis/summary_subset_interaction_effect")
+#   out_dir <- file.path("results_major_review/tcga/analysis/summary_subset_prediction_effect")
 #   if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
   
 #   write.csv(
@@ -247,3 +248,4 @@ for (config_file in configs) {
 #     row.names = FALSE
 #   )
 # }
+

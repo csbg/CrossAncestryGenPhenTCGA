@@ -6,9 +6,6 @@ suppressPackageStartupMessages(
   }
 )
 
-## Review process =============================================================
-review <- TRUE
-
 ## Configs ====================================================================
 configs <- list.files(
   file.path("configs", "tcga"), 
@@ -36,12 +33,9 @@ for (config_file in configs) {
     cfg$a1, "_vs_", 
     cfg$a2
   )
-  
 
-  # Output directory
-  out_dir <- sub("^results", "results_major_review", cfg$out_dir)
   out_dir <- file.path(
-    out_dir, 
+    cfg$out_dir, 
     "subset_prediction_effect", 
     comp
   )
@@ -112,9 +106,6 @@ for (config_file in configs) {
 
   n_X <- .get_n(meta = data$X$meta, g_col = cfg$g_col, a_col = cfg$a_col)
   n_Y <- .get_n(meta = data$Y$meta, g_col = cfg$g_col, a_col = cfg$a_col)
-  if (min(n_X$n) < 2 || min(n_Y$n) < 2) {
-    next
-  }
   final_n <- rbind(n_X, n_Y)
   
   # Add meta
@@ -152,7 +143,7 @@ for (config_file in configs) {
       MY = data$Y$meta,
       g_col = cfg$g_col,
       a_col = cfg$a_col,
-      any_group = TRUE, # R1.07: Retain methylation sites based on variance within ancestry.
+      any_group = FALSE,
       verbose = FALSE,
       plot = FALSE
     )
@@ -207,7 +198,7 @@ for (config_file in configs) {
   )
 
   # Pred.
-  res <- subset_logistic_prediction_effect(
+  res <- subset_logistic_regression_prediction(
     X = data$X$matr,
     Y = data$Y$matr,
     MX = data$X$meta,
@@ -230,21 +221,21 @@ for (config_file in configs) {
   saveRDS(res, file = result_file)
 }
 
-# # Summary
-# if (length(all_n_list) > 0) {
+# Summary
+if (length(all_n_list) > 0) {
   
-#   all_n   <- do.call(rbind, all_n_list)
+  all_n   <- do.call(rbind, all_n_list)
 
-#   out_dir <- file.path("results_major_review/tcga/analysis/summary_subset_prediction_effect")
-#   if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
+  out_dir <- file.path("results/tcga/analysis/summary_subset_logistic_regression_effect")
+  if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
   
-#   write.csv(
-#     all_n,
-#     file = file.path(
-#       out_dir,
-#       "summary_sample_n.csv"
-#     ), 
-#     row.names = FALSE
-#   )
-# }
+  write.csv(
+    all_n,
+    file = file.path(
+      out_dir,
+      "summary_sample_n.csv"
+    ), 
+    row.names = FALSE
+  )
+}
 

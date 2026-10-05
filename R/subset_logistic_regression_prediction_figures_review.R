@@ -301,7 +301,7 @@ subset_res <- rbindlist(lapply(names(res_dirs), function(study) {
 }), fill = TRUE)
 
 
-alpha <- 0.1
+alpha   <- 0.1
 formats <- c("svg", "png")
 
 ## Reviewer 1 =================================================================
@@ -311,8 +311,6 @@ res_dirs_major_review <- list(
   UCEC = file.path("results_major_review", "tcga", "analysis", "TCGA_UCEC"),
   THCA = file.path("results_major_review", "tcga", "analysis", "TCGA_THCA")
 )
-
-
 
 ### R1.11 ---------------------------------------------------------------------
 #### Panel A (Correlation of raw weights vs. L1 norm. weights) ----------------
@@ -1715,7 +1713,7 @@ for (tc in techs) {
       "Inference (non-EUR)"
     ),
     labels = c(
-      "Validation (subset-EUR)",
+      "Validation (EUR)",
       "Inference (non-EUR)"
     ),
     guide = guide_legend(order = 1)
@@ -1948,7 +1946,7 @@ geom_point(
   # stroke = 0.1
 ) +
 scale_color_gradient2(
-  name = expression(log[2] ~ (frac("non-EUR"["log loss"], "subset-EUR"["log loss"]))),
+  name = expression(log[2] ~ (frac("non-EUR"["log loss"], "EUR"["log loss"]))),
   low  = "#4575b4",
   mid  = "white",
   high = "#d73027",
