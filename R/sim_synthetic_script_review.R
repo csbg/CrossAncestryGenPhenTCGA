@@ -1,58 +1,18 @@
 ## max. code width ============================================================
+
+
 ## Libraries ==================================================================
-suppressPackageStartupMessages(
-  {
-    library(CrossAncestryGenPhen)
-    library(data.table)
-    library(patchwork)
-    library(openxlsx)
-    library(ggplot2)
-    library(future)
-  }
-)
+suppressPackageStartupMessages({
+  library(CrossAncestryGenPhen)
+  library(data.table)
+  library(patchwork)
+  library(openxlsx)
+  library(ggplot2)
+  library(future)
+})
 
-## script fun. ================================================================
-check_alignment <- function(dt_method, dt_truth, cols_check) {
-
-  # Check same number of rows
-  if (nrow(dt_method) != nrow(dt_truth)) {
-    stop("Row count mismatch: method=", nrow(dt_method), " vs truth=", nrow(dt_truth))
-  }
-
-  # Check columns exist
-  missing_cols <- setdiff(cols_check, intersect(names(dt_method), names(dt_truth)))
-  if (length(missing_cols) > 0) {
-    stop("Missing key columns: ", paste(missing_cols, collapse = ", "))
-  }
-
-  # Check identical ordering + values
-  equal_keys <- dt_method[, ..cols_check] == dt_truth[, ..cols_check]
-  if (!all(equal_keys)) {
-    bad_rows <- which(!apply(equal_keys, 1, all))
-    example  <- head(bad_rows)
-    stop("Data misaligned in ", length(bad_rows), " rows. Example indices: ", paste(example, collapse = ", "))
-  }
-
-  # Optional hash check for speed and safety
-  hash_m <- digest::digest(dt_method[, ..cols_check])
-  hash_t <- digest::digest(dt_truth[, ..cols_check])
-  if (hash_m != hash_t) stop("Hash mismatch: possible ordering issue")
-
-  # Row difference
-  anti_miss1 <- data.table::fsetdiff(dt_method[, ..cols_check], dt_truth[, ..cols_check])
-  anti_miss2 <- data.table::fsetdiff(dt_truth[, ..cols_check], dt_method[, ..cols_check])
-  if (nrow(anti_miss1) > 0) {
-    message("→ Rows in method but not in truth: ", nrow(anti_miss1))
-    stop("Sim truth and DGE results misaligned — see printed diagnostics for details.")
-    }
-  if (nrow(anti_miss2) > 0) {
-    message("→ Rows in truth but not in method: ", nrow(anti_miss2))
-    stop("Sim truth and DGE results misaligned — see printed diagnostics for details.")
-  }
-  
-  # Return
-  return(TRUE)
-}
+## utils.R ====================================================================
+source("R/utils.R")
 
 ## Configs ====================================================================
 configs <- list.files(
@@ -63,33 +23,35 @@ configs <- list.files(
 )
 
 ## Parameters =================================================================
-seed <- 42
+seed   <- 42
+n_iter <- 20
 
 sim_grid <- setDT(
     sim_make_grid(
     # Simulations
     n_samples = c(1000),
-    n_degs = c(0, 500, 1000),
-    log2fc = c(0, 1, 2),
+    n_degs    = c(500, 1000, 2000),
+    log2fc    = c(1, 2, 3),
     # Imbalancing
     total_samples = c(150, 500, 1000),
     between_ratio = c(1, 5, 10),
-    within_ratio = c(1, 5, 10),
-    zero_rules = TRUE,  # Only run one negative control simulation (don't expand grid where n_degs = 0 to more then one row)
-    verbose = TRUE   
+    within_ratio  = c(1, 5, 10),
+    # Other
+    zero_rules = TRUE,
+    verbose    = FALSE
   )
 )
 
 # sim_grid <- setDT(
 #     sim_make_grid(
 #     # Simulations
-#     n_samples = c(200),
+#     n_samples = c(20),
 #     n_degs = c(500),
 #     log2fc = c(1),
 #     # Imbalancing
-#     total_samples = c(150), # 150 is the smallest possible sample size with 1/10 imbalance
-#     between_ratio = c(10),
-#     within_ratio = c(10),
+#     total_samples = c(10), # 150 is the smallest possible sample size with 1/10 imbalance
+#     between_ratio = c(1),
+#     within_ratio = c(1),
 #     zero_rules = TRUE,
 #     verbose = FALSE   
 #   )
@@ -111,8 +73,8 @@ for (config_file in configs) {
   # Output directory
   out_dir <- sub("^results", "results_major_review", cfg$out_dir)
   out_dir <- file.path(
-    out_dir, 
-    "sim_synthetic", 
+    out_dir,
+    paste0("sim_synthetic_nsubsets_", n_iter),
     comp
   )
 
@@ -168,26 +130,8 @@ for (config_file in configs) {
   )
 
   # Estimate NB params.
-  NB_params_X <- estimate_nbinom_params(
-    data$X$matr, 
-    plot = FALSE,
-    verbose = FALSE
-  )
-
-  NB_params_Y <- estimate_nbinom_params(
-    data$Y$matr, 
-    plot = FALSE,
-    verbose = FALSE
-  )
-
-  # QC plot
-  ggsaveDK(
-    plot = NB_params_X$plot / NB_params_Y$plot,
-    file = file.path(out_dir, "nbinom_params.svg"),
-    height = 5,
-    width = 10,
-    units = "cm"
-  )
+  NB_params_X <- estimate_nbinom_params(data$X$matr, plot = FALSE, verbose = FALSE)
+  NB_params_Y <- estimate_nbinom_params(data$Y$matr, plot = FALSE, verbose = FALSE)
 
   # Split 'sim_grid' into sim params vs imbalance params
   sim_params_grid <- unique(sim_grid[, .(n_samples, n_degs, log2fc)])
@@ -195,14 +139,13 @@ for (config_file in configs) {
 
   # Outer loop: Simulate once per sim config (world population)
   res_sim_list <- list()
-  qc_sim_list  <- list()
   for (j in seq_len(nrow(sim_params_grid))) {
 
     # Define 'world population' params
     n_samples <- sim_params_grid$n_samples[j]
     n_degs    <- sim_params_grid$n_degs[j]
     log2fc    <- sim_params_grid$log2fc[j]
-    message(sprintf("\nsim. id: %d [n: %-4s degs: %s logfc: %s]", j, n_samples, n_degs, log2fc))
+    message(sprintf("\nsim. id: %d [n: %s degs: %s logfc: %s]", j, n_samples, n_degs, log2fc))
 
     # Simulate (NB dist.)
     sim <- sim_4group_expression(
@@ -223,27 +166,11 @@ for (config_file in configs) {
       verbose = FALSE
     )
 
-    # QC plot 
-    qc_data  <- rbind(sim$X$matr, sim$Y$matr)
-    qc_title <- sprintf( "N: %d nDEG: %d log2fc: %.1f", n_samples, n_degs, log2fc)
-    qc_theme <- theme(plot.title = element_text(size = 6, hjust = 0.5))
-
-    qc_sim_list[[j]] <- wrap_plots(
-      sim$plot /
-        (
-          plot_mean_variance_trend(qc_data, point_size = 0.5) +
-          plot_mean_variance_density(qc_data, point_size = 0.5)
-        )
-      ) +
-      plot_annotation(
-        title = qc_title,
-        theme = qc_theme
-      )
-
     # Extract truth (TRUE interaction effects!!!!)
     cols_check <- c("coef_id", "coef_type", "contrast", "g_1", "g_2", "a_1", "a_2", "feature")
     sim_truth  <- setDT(sim$degs)
     truth_keep <- sim_truth[, c(.SD, .(T_truth = T_obs)), .SDcols = cols_check]
+    if (anyNA(truth_keep$T_truth)) stop("Simulation logFC have NA values.")
 
     # Inner loop: Run all imbalance configs on same simulation
     for (k in seq_len(nrow(imb_params_grid))) {
@@ -252,7 +179,7 @@ for (config_file in configs) {
       total_samples <- imb_params_grid$total_samples[k]
       between_ratio <- imb_params_grid$between_ratio[k]
       within_ratio  <- imb_params_grid$within_ratio[k]
-      message(sprintf(" - imb. id: %d [n: %-4s a_col ratio: %-2s g_col ratio: %-2s]", k, total_samples, between_ratio, within_ratio))
+      message(sprintf("\timb. id: %d [n: %s a_col: %s g_col: %s]", k, total_samples, between_ratio, within_ratio))
 
       # Imbalance 'world population' (biased sampling)
       imb <- sim_imbalanced_ancestry(
@@ -275,7 +202,7 @@ for (config_file in configs) {
       dge_methods <- list()
 
       # Ancestry balanced
-      message("   limma  (ancestry)")
+      message("\t\tlimma  (ancestry)")
       subset_res_ <- subset_limma_interaction_effect(
         X = imb$X$matr,
         Y = imb$Y$matr,
@@ -286,7 +213,7 @@ for (config_file in configs) {
         match = FALSE,
         covariates = NULL,
         use_voom = TRUE,
-        n_iter = 10,
+        n_iter = n_iter,
         method = "mean",
         seed = seed,
         verbose = FALSE
@@ -295,21 +222,19 @@ for (config_file in configs) {
       # All p-value agg. methods
       subset_res <- subset_res_$methods_stats
       for (m in names(subset_res)) {
-        m_name <- paste0("subset-", m)
+        m_name <- paste0("subset-", m, " (ancestry)")
 
         method_res <- setDT(subset_res[[m]])
-        method_res$strata <- "Ancestry\nsubset"
+        method_res$method <- paste0("subset-", m)
+        method_res$strata <- "Ancestry balanced"
 
         # Check and add
-        # setkeyv(method_res, cols_check)
-        # setkeyv(sim_truth, cols_check)
-
-        # check_alignment(method_res, sim_truth, cols_check)
+        stopifnot(!anyNA(method_res$T_obs))
         dge_methods[[m_name]] <- method_res
       }
 
       # Ancestry + cancer balance
-      message("   limma  (ancestry + cancer)")
+      message("\t\tlimma  (ancestry + cancer)")
       subset_res_ <- subset_limma_interaction_effect(
         X = imb$X$matr,
         Y = imb$Y$matr,
@@ -320,7 +245,7 @@ for (config_file in configs) {
         match = TRUE,
         covariates = NULL,
         use_voom = TRUE,
-        n_iter = 10,
+        n_iter = n_iter,
         method = "mean",
         seed = seed,
         verbose = FALSE
@@ -329,21 +254,19 @@ for (config_file in configs) {
       # All p-value agg. methods
       subset_res <- subset_res_$methods_stats
       for (m in names(subset_res)) {
-        m_name <- paste0("subset-", m)
+        m_name <- paste0("subset-", m, " (ancestry + cancer)")
 
         method_res <- setDT(subset_res[[m]])
-        method_res$strata <- "Ancestry + cancer\nsubset"
+        method_res$method <- paste0("subset-", m)
+        method_res$strata <- "Ancestry + cancer balanced"
 
         # Check and add
-        # setkeyv(method_res, cols_check)
-        # setkeyv(sim_truth, cols_check)
-
-        # check_alignment(method_res, sim_truth, cols_check)
+        stopifnot(!anyNA(method_res$T_obs))
         dge_methods[[m_name]] <- method_res
       }
 
       # Limma full
-      message("   limma  (imbalanced)")
+      message("\t\tlimma  (imbalanced)")
       limma_full_res_ <- limma_interaction_effect(
         X = imb$X$matr,
         Y = imb$Y$matr,
@@ -356,17 +279,15 @@ for (config_file in configs) {
         verbose = FALSE
       )
 
+      limma_full_res_$method <- "limma-voom"
       limma_full_res_$strata <- "Imbalanced"
 
       # Check and add
-      # setkeyv(method_res, cols_check)
-      # setkeyv(sim_truth, cols_check)
-
-      # check_alignment(setDT(limma_full_res_), sim_truth, cols_check)
+      stopifnot(!anyNA(limma_full_res_$T_obs))
       dge_methods[["limma-voom"]] <- setDT(limma_full_res_)
 
       # EdgeR full
-      message("   edger  (imbalanced)")
+      message("\t\tedger  (imbalanced)")
       edgeR_full_res_ <- edgeR_interaction_effect(
         X = imb$X$matr,
         Y = imb$Y$matr,
@@ -378,17 +299,15 @@ for (config_file in configs) {
         verbose = FALSE
       )
 
+      edgeR_full_res_$method <- "edgeR-QLFTest"
       edgeR_full_res_$strata <- "Imbalanced"
 
       # Check and add
-      # setkeyv(method_res, cols_check)
-      # setkeyv(sim_truth, cols_check)
-
-      # check_alignment(setDT(edgeR_full_res_), sim_truth, cols_check)
+      stopifnot(!anyNA(edgeR_full_res_$T_obs))
       dge_methods[["edgeR-QLFTest"]] <- setDT(edgeR_full_res_)
 
       # DESeq full
-      message("   deseq2 (imbalanced)")
+      message("\t\tdeseq2 (imbalanced)")
       deseq_full_res_ <- DESeq_interaction_effect(
         X = imb$X$matr,
         Y = imb$Y$matr,
@@ -400,13 +319,11 @@ for (config_file in configs) {
         verbose = FALSE
       )
 
+      deseq_full_res_$method <- "DESeq2-Wald"
       deseq_full_res_$strata <- "Imbalanced"
 
       # Check and add
-      # setkeyv(method_res, cols_check)
-      # setkeyv(sim_truth, cols_check)
-
-      # check_alignment(setDT(deseq_full_res_), sim_truth, cols_check)
+      stopifnot(!anyNA(deseq_full_res_$T_obs))
       dge_methods[["DESeq2-Wald"]] <- setDT(deseq_full_res_)
 
       # Merge DEG res with truth
@@ -423,16 +340,19 @@ for (config_file in configs) {
           sort = FALSE
         )
 
+        # P-value NAs are expected as DESeq2 does internal filtering
+        if (anyNA(merged$T_truth)) stop(sprintf("Method '%s' has NA values in 'T_truth'.", m))
+        if (anyNA(merged$T_obs)) stop(sprintf("Method '%s' has NA values in 'T_obs'.", m))
+
         # Save per sim config
         res_sim_list[[length(res_sim_list) + 1]] <- data.table(
-          study = cfg$study,
-          method = m,
           n_samples = n_samples,
           n_degs = n_degs,
           log2fc = log2fc,
           total_samples = total_samples,
           between_ratio = between_ratio,
           within_ratio = within_ratio,
+          method_label = m,
           merged
         )
       }
@@ -445,16 +365,4 @@ for (config_file in configs) {
 
   # Save
   saveRDS(dge_res, file = result_file)
-
-  # Simulation QC plots (combine)
-  ggsaveDK(
-    plot = wrap_plots(
-      lapply(qc_sim_effects_list, wrap_elements),
-      ncol = nrow(sim_params_grid)
-    ),
-    file = file.path(out_dir, "sim_effects.svg"),
-    height = 8 * nrow(sim_params_grid),
-    width = 8 * nrow(sim_params_grid),
-    units = "cm"
-  )
 }

@@ -1,10 +1,13 @@
 ## max. code width ============================================================
+
+
 ## Libraries ==================================================================
-suppressPackageStartupMessages(
-  {
-    library(CrossAncestryGenPhen)
-  }
-)
+suppressPackageStartupMessages({
+  library(CrossAncestryGenPhen)
+})
+
+## utils.R ====================================================================
+source("R/utils.R")
 
 ## Configs ====================================================================
 configs <- list.files(
@@ -43,13 +46,15 @@ for (config_file in configs) {
   # Output file
   result_file <- file.path(out_dir, "dge_res.rds")
   if (file.exists(result_file)) {
-    message("\nSkipping: '", config_file, "' — results already exist!")
+    message("\nSkipping: ", config_file, " — results already exist!")
     message("Results file: ", result_file)
     next  
+  } else {
+    message("\nProcessing: ", config_file)
+    message("Results file: ", result_file)
   }
 
   # Read data
-  cat("Processing study:", cfg$study, cfg$tech, "\n")
   data <- readRDS(cfg$file)
   data <- data[[cfg$tech]]
 
@@ -215,7 +220,7 @@ for (config_file in configs) {
   saveRDS(res, file = result_file)
 }
 
-# Summary
+## Summary ====================================================================
 if (length(all_n_list) > 0) {
   
   all_n   <- do.call(rbind, all_n_list)

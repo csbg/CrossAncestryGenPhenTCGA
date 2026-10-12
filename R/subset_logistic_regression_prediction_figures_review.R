@@ -1,201 +1,88 @@
-## Review =====================================================================
-
 ## max. code width ============================================================
+
+
 ## Libraries ==================================================================
-suppressPackageStartupMessages(
-  {
-    library(CrossAncestryGenPhen)
-    library(ComplexHeatmap)
-    library(data.table)
-    library(ggnewscale)
-    library(patchwork)
-    library(yardstick)
-    library(circlize)
-    library(ggplot2)
-    library(msigdbr)
-    library(fgsea)
-    library(ggh4x)
-  }
+suppressPackageStartupMessages({
+  library(CrossAncestryGenPhen)
+  library(ComplexHeatmap)
+  library(data.table)
+  library(ggnewscale)
+  library(openxlsx)
+  library(patchwork)
+  library(yardstick)
+  library(circlize)
+  library(ggplot2)
+  library(msigdbr)
+  library(fgsea)
+  library(ggh4x)
+})
+
+## utils.R ====================================================================
+source("R/utils.R")
+
+## Parameters ===================================================================
+target_alpha <- 0.1
+
+formats  <- c("svg", "png")
+settings <- list(
+  title_gp    = gpar(fontsize = 6),
+  labels_gp   = gpar(fontsize = 6),
+  grid_width  = unit(0.2, "cm"), 
+  grid_height = unit(0.2, "cm")
 )
 
-## Script fun. ================================================================
+# Data.table threads
+setDTthreads(threads = 0)
 
-# Make shorter phenotype
-vs_newline <- function(x) {
-  gsub("\\s*vs\\s*", " vs\n", x)
-}
 
-rename_phenotype <- function(x) {
-  x <- gsub("\\bLumA\\b", "Luminal A", x)
-  x <- gsub("\\bLumB\\b", "Luminal B", x)
-  x
-}
 
-# Save cor
-cor_safe <- function(x, y, n) {
+## Paper ======================================================================
+message("\nCreating paper figures...")
+### paper directories ---------------------------------------------------------
+fig_dir <- file.path("results_major_review", "tcga", "figures", "subset_logistic_regression_prediction")
+tab_dir <- file.path("results_major_review", "tcga", "tables", "subset_logistic_regression_prediction")
 
-  if (
-    n >= 3 &&
-    sd(x) > 0 &&
-    sd(y) > 0
-  ) {
-    cor(x, y, method = "pearson")
-  } else {
-    NA_real_
-  }
-}
+# Figures
+fig_dir_main <- file.path(fig_dir, "main")
+fig_dir_supp <- file.path(fig_dir, "supp")
+if (!dir.exists(fig_dir_main)) dir.create(fig_dir_main, recursive = TRUE)
+if (!dir.exists(fig_dir_supp)) dir.create(fig_dir_supp, recursive = TRUE)
 
-# Save heatmap
-save_heatmapsDK <- function(
-  plot,
-  file,
-  height,
-  width,
-  bg = "transparent",
-  dpi = NA,
-  unit = "cm",
-  ncol = 2
-) {
-  
-  # helper: convert to inches if needed
-  to_in <- function(x, unit) {
-    if (unit == "cm") return(x / 2.54)
-    if (unit == "mm") return(x / 25.4)
-    if (unit == "in") return(x)
-    stop("Unsupported unit: ", unit)
-  }
-  
-  width_in  <- to_in(width, unit)
-  height_in <- to_in(height, unit)
-  
-  # infer format
-  ext <- tools::file_ext(file)
-  
-  # open device
-  if (ext == "svg") {
-    svg(file, width = width_in, height = height_in)
-    
-  } else if (ext == "png") {
-    png(
-      file,
-      width = width_in,
-      height = height_in,
-      units = "in",
-      res = ifelse(is.na(dpi), 300, dpi),
-      bg = bg
-    )
-    
-  } else {
-    stop(paste("Unsupported format:", ext))
-  }
-  
-  heatmaps <- plot
-  n <- length(heatmaps)
-  nrow <- ceiling(n / ncol)
-  
-  pushViewport(viewport(layout = grid.layout(nrow, ncol)))
-  
-  for (i in seq_along(heatmaps)) {
-    row <- ceiling(i / ncol)
-    col <- i %% ncol
-    if (col == 0) col <- ncol
-    
-    pushViewport(
-      viewport(
-        layout.pos.row = row,
-        layout.pos.col = col
-      )
-    )
+# Tables
+tab_dir_supp <- file.path(tab_dir, "supp")
+tab_dir_fig  <- file.path(tab_dir, "fig")
+if (!dir.exists(tab_dir_fig)) dir.create(tab_dir_fig, recursive = TRUE)
+if (!dir.exists(tab_dir_supp)) dir.create(tab_dir_supp, recursive = TRUE)
 
-    draw(
-      heatmaps[[i]], 
-      merge_legends = FALSE,              
-      legend_grouping = "original",
-        
-      heatmap_legend_side = "right",       
-      annotation_legend_side = "bottom", 
-        
-      newpage = FALSE
-    )
 
-    grid::grid.text(
-      letters[i],
-      x = unit(2, "mm"),
-      y = unit(1, "npc") - unit(2, "mm"),
-      just = c("left", "top"),
-      gp = gpar(fontsize = 10, fontface = "bold")
-    )
-    upViewport()
-  }
-  
-  dev.off()
-}
-
-## Colors =====================================================================
-
-ancestry_cols <- c(
-  "EUR"   = "#0072B2",
-  "AFR"   = "#D55E00",
-  "EAS"   = "#56B4E9",
-  "AMR"   = "#E69F00",
-  "SAS"   = "#009E73",
-  "ADMIX" = "#999999"
-)
-
-phenotype_cols <- c(
-  "Basal vs non-Basal"      = "#c67aa3", 
-  "Luminal A vs Luminal B"  = "darkred", 
-  "Normal vs Primary"       = "#A65628", 
-  "Serous vs Endometrioid"  = "#414141", 
-  "Classical vs Follicular" = "#1B9E77", 
-  "M0 vs MX"                = "#d9c002"
-)
-
-## Directories ================================================================
-
-# Result directories (per cance study)
+## Results ====================================================================
+### res directories           -------------------------------------------------
 res_dirs <- list(
   BRCA = file.path("results", "tcga", "analysis", "TCGA_BRCA"),
   UCEC = file.path("results", "tcga", "analysis", "TCGA_UCEC"),
   THCA = file.path("results", "tcga", "analysis", "TCGA_THCA")
 )
+sum_dir <- file.path("results", "tcga", "analysis", "summary_subset_logistic_regression_prediction")
+stopifnot(length(unique(dirname(c(unlist(res_dirs), sum_dir)))) == 1)
 
-# Figures
-fig_dir <- file.path("results_major_review", "tcga", "figures", "subset_prediction_effect")
-if (!dir.exists(fig_dir)) dir.create(fig_dir, recursive = TRUE)
+cfg_dirs <- list(
+  BRCA = file.path("configs", "tcga", "TCGA_BRCA"),
+  UCEC = file.path("configs", "tcga", "TCGA_UCEC"),
+  THCA = file.path("configs", "tcga", "TCGA_THCA")
+)
 
-# Tables
-tab_dir <- file.path("results_major_review", "tcga", "tables", "subset_prediction_effect")
-if (!dir.exists(tab_dir)) dir.create(tab_dir, recursive = TRUE)
+### prediction loss fraction  -------------------------------------------------
+if (!file.exists(file = file.path(sum_dir, "summary_pred_loss.rds"))) {
 
-## Results ====================================================================
+  message("Preparing 'pred_loss' from individual results.")
+  pred_loss <- rbindlist(lapply(names(res_dirs), function(study) {
 
-# AUC
-auc_stats <- rbindlist(lapply(names(res_dirs), function(study) {
-
-    fp    <- file.path(res_dirs[[study]], "subset_prediction_effect")
+    fp    <- file.path(res_dirs[[study]], "subset_logistic_regression_prediction")
     files <- list.files(fp, "dge_res\\.rds$", recursive = TRUE, full.names = TRUE)
     techs <- sub("_.*$", "", basename(dirname(files)))
 
-    # List of subset stats + tech
-    dts <- Map(function(f,t) {
-      dt <- as.data.table(readRDS(f)$summary_stats)
-      dt[, tech := t]
-    }, files, techs)
-
-  # Add phenotype and study
-  out <- rbindlist(dts)
-  out[, phenotype := gsub("_", "-", paste(g_1, "vs", g_2))]
-  out[, study := study] 
-  out
-}), use.names = TRUE, fill = TRUE)
-
-# Loss
-pred_loss <- rbindlist(lapply(names(res_dirs), function(study) {
-
-    fp    <- file.path(res_dirs[[study]], "subset_prediction_effect")
-    files <- list.files(fp, "dge_res\\.rds$", recursive = TRUE, full.names = TRUE)
-    techs <- sub("_.*$", "", basename(dirname(files)))
+    cfg   <- list.files(cfg_dirs[[study]])
+    message(sprintf("%s found %d/%d files.", study, length(files), length(cfg)))
 
     # List of subset stats + tech
     dts <- Map(function(f,t) {
@@ -232,225 +119,773 @@ pred_loss <- rbindlist(lapply(names(res_dirs), function(study) {
       cbind(meta, sm)
     })
 
-  # Add phenotype and study
-  out <- rbindlist(fr)
-  out[, phenotype := gsub("_", "-", paste(g_1, "vs", g_2))]
-  out[, study := study] 
-  out
-}), use.names = TRUE, fill = TRUE)
+    # Add phenotype and study
+    out <- rbindlist(fr)
+    out[, phenotype := gsub("_", "-", paste(g_1, "vs", g_2))]
+    out[, study := study] 
+    out
+  }), use.names = TRUE, fill = TRUE)
 
-# Probabilities
-pred_prob <- rbindlist(lapply(names(res_dirs), function(study) {
-    ## Files 
-    fp    <- file.path(res_dirs[[study]], "subset_prediction_effect")
+  # Save
+  saveRDS(
+    object = pred_loss,
+    file = file.path(
+      sum_dir,
+      "summary_pred_loss.rds"
+    )
+  )
+
+} else {
+  message("Loading 'pred_loss' from: ", sum_dir)
+  pred_loss <- readRDS(file = file.path(sum_dir, "summary_pred_loss.rds"))
+}
+
+### prediction probabilities  -------------------------------------------------
+if (!file.exists(file = file.path(sum_dir, "summary_pred_prob.rds"))) {
+
+  message("Preparing 'pred_prob' from individual results.")
+  pred_prob <- rbindlist(lapply(names(res_dirs), function(study) {
+      ## Files 
+      fp    <- file.path(res_dirs[[study]], "subset_logistic_regression_prediction")
+      files <- list.files(fp, "dge_res\\.rds$", recursive = TRUE, full.names = TRUE)
+      techs <- sub("_.*$", "", basename(dirname(files)))
+
+      cfg   <- list.files(cfg_dirs[[study]])
+      message(sprintf("%s found %d/%d files.", study, length(files), length(cfg)))
+
+      # List of subset stats + tech
+      dts <- Map(function(f,t) {
+        dt <- as.data.table(readRDS(f)$subsets_stats)
+        dt[, tech := t]
+      }, files, techs)
+
+      # Output
+      out <- rbindlist(dts)
+      out[, phenotype := gsub("_", "-", paste(g_1, "vs", g_2))]
+      out[, study := study] 
+      out
+  }), use.names = TRUE, fill = TRUE)
+
+  # Save
+  saveRDS(
+    object = pred_prob,
+    file = file.path(
+      sum_dir,
+      "summary_pred_prob.rds"
+    )
+  )
+
+} else {
+  message("Loading 'pred_prob' from: ", sum_dir)
+  pred_prob <- readRDS(file = file.path(sum_dir, "summary_pred_prob.rds"))
+}
+
+### prediction features       -------------------------------------------------
+if (!file.exists(file = file.path(sum_dir, "summary_pred_feat.rds"))) {
+
+  message("Preparing 'pred_feat' from individual results.")
+  pred_feat <- rbindlist(lapply(names(res_dirs), function(study) {
+
+    fp    <- file.path(res_dirs[[study]], "subset_logistic_regression_prediction")
     files <- list.files(fp, "dge_res\\.rds$", recursive = TRUE, full.names = TRUE)
     techs <- sub("_.*$", "", basename(dirname(files)))
 
+    cfg   <- list.files(cfg_dirs[[study]])
+    message(sprintf("%s found %d/%d files.", study, length(files), length(cfg)))
+
     # List of subset stats + tech
     dts <- Map(function(f,t) {
-      dt <- as.data.table(readRDS(f)$subsets_stats)
+      dt <- as.data.table(readRDS(f)$feature_stats)
       dt[, tech := t]
+      dt[, l1_norm := estimate / sum(abs(estimate)), by = .(iteration)]
+      dt
     }, files, techs)
 
-    # Output
+    # Add phenotype and study
     out <- rbindlist(dts)
     out[, phenotype := gsub("_", "-", paste(g_1, "vs", g_2))]
     out[, study := study] 
     out
-}), use.names = TRUE, fill = TRUE)
+  }), use.names = TRUE, fill = TRUE)
 
-# Feature importance
-pred_feat <- rbindlist(lapply(names(res_dirs), function(study) {
-
-  fp    <- file.path(res_dirs[[study]], "subset_prediction_effect")
-  files <- list.files(fp, "dge_res\\.rds$", recursive = TRUE, full.names = TRUE)
-  techs <- sub("_.*$", "", basename(dirname(files)))
-
-  # List of subset stats + tech
-  dts <- Map(function(f,t) {
-    dt <- as.data.table(readRDS(f)$feature_stats)
-    dt[, tech := t]
-    dt[, l1_norm := estimate / sum(abs(estimate)), by = .(iteration)]
-    dt
-  }, files, techs)
-
-  # Add phenotype and study
-  out <- rbindlist(dts)
-  out[, phenotype := gsub("_", "-", paste(g_1, "vs", g_2))]
-  out[, study := study] 
-  out
-}), use.names = TRUE, fill = TRUE)
-
-# Interaction effect
-subset_res <- rbindlist(lapply(names(res_dirs), function(study) {
-  file_path <- file.path(res_dirs[[study]], "subset_interaction_effect")
-  dge_files <- list.files(file_path, pattern = "dge_res\\.rds$", recursive = TRUE, full.names = TRUE)
-  # Load all files
-  all_files <- lapply(dge_files, readRDS)
-  dt <- rbindlist(lapply(all_files, \(x) x$summary_stats), use.names = TRUE, fill = TRUE)
-  # Set phenotype
-  dt[, phenotype := fcase(
-    coef_id == "baseline_1", paste0(g_1),
-    coef_id == "baseline_2", paste0(g_2),
-    coef_id == "relationship_1", paste(g_1, "vs", g_2),
-    coef_id == "relationship_2", paste(g_1, "vs", g_2),
-    coef_id == "interaction", paste(g_1, "vs", g_2)
-  )]
-  dt[, phenotype := gsub("_", "-", phenotype)]
-  dt
-}), fill = TRUE)
-
-
-alpha   <- 0.1
-formats <- c("svg", "png")
-
-## Reviewer 1 =================================================================
-### R1.07 ---------------------------------------------------------------------
-res_dirs_major_review <- list(
-  BRCA = file.path("results_major_review", "tcga", "analysis", "TCGA_BRCA"),
-  UCEC = file.path("results_major_review", "tcga", "analysis", "TCGA_UCEC"),
-  THCA = file.path("results_major_review", "tcga", "analysis", "TCGA_THCA")
-)
-
-### R1.11 ---------------------------------------------------------------------
-#### Panel A (Correlation of raw weights vs. L1 norm. weights) ----------------
-settings <- list(
-  title_gp    = gpar(fontsize = 6),
-  labels_gp   = gpar(fontsize = 6),
-  grid_width  = unit(0.2, "cm"), 
-  grid_height = unit(0.2, "cm")
-)
-
-techs <- c("mrna", "meth")
-
-r1.11_panel_A <- list()
-for (t in techs) {
-  
-  # Long
-  r1.11_df <- pred_feat[
-    study == "THCA" & 
-    tech == t
-  ]
-  
-  r1.11_df[, model_id := paste(study, tech, phenotype, a_2, paste0("Iter", iteration), sep = ":")]
-  
-  # Wide
-  r1.11_df_wide <- dcast(
-    r1.11_df, 
-    feature ~ model_id, 
-    value.var = c("estimate", "l1_norm"),
-    sep = ":"
-  )
-  r1.11_df_wide <- na.omit(r1.11_df_wide)
-  
-  # Matrix
-  r1.11_mat <- as.matrix(r1.11_df_wide[, -1])
-  r1.11_cor_mat <- cor(r1.11_mat, method = "spearman")
-  diag(r1.11_cor_mat) <- NA
-
-  # Meta
-  r1.11_meta <- data.frame(model_id = colnames(r1.11_cor_mat), stringsAsFactors = FALSE)
-  r1.11_meta$metric    <- sapply( strsplit(r1.11_meta$model_id, ":"), function(x) x[1])
-  r1.11_meta$metric    <- ifelse(r1.11_meta$metric == "estimate", "Raw", "L1 norm.")
-  r1.11_meta$study     <- sapply( strsplit(r1.11_meta$model_id, ":"), function(x) x[2])
-  r1.11_meta$tech      <- sapply( strsplit(r1.11_meta$model_id, ":"), function(x) x[3])
-  r1.11_meta$phenotype <- sapply( strsplit(r1.11_meta$model_id, ":"), function(x) x[4])
-  r1.11_meta$ancestry  <- sapply( strsplit(r1.11_meta$model_id, ":"), function(x) x[5])
-  r1.11_meta$iteration <- sapply( strsplit(r1.11_meta$model_id, ":"), function(x) x[6])
-
-  weight_cols <- c("Raw" = "#4DAF4A", "L1 norm." = "#984EA3")
-
-  # Top annotation 
-  anno_col_top <- HeatmapAnnotation(
-    `Model weight` = r1.11_meta$metric,
-    Comparison = r1.11_meta$phenotype,
-    Ancestry = r1.11_meta$ancestry,
-    col = list(`Model weight` = weight_cols, Ancestry = ancestry_cols, `Comparison` = phenotype_cols),
-    annotation_name_side = "left",
-    show_annotation_name = TRUE,
-    simple_anno_size = unit(0.2, "cm"), 
-    annotation_name_gp = gpar(fontsize = 6), 
-    annotation_legend_param = list(`Model weight` = settings, Comparison = settings, Ancestry = settings)
+  # Save
+  saveRDS(
+    object = pred_feat,
+    file = file.path(
+      sum_dir,
+      "summary_pred_feat.rds"
+    )
   )
 
-  # Left annotation
-  anno_row_left <- rowAnnotation(
-    `Model weight` = r1.11_meta$metric,
-    Comparison = r1.11_meta$phenotype,
-    Ancestry = r1.11_meta$ancestry,
-    col = list(`Model weight` = weight_cols, Ancestry = ancestry_cols, Comparison = phenotype_cols),
-    simple_anno_size = unit(0.2, "cm"), 
-    show_annotation_name = FALSE,
-    show_legend = FALSE
-  )
-  
-  # Heatmap 
-  r1.11_panel_A[[t]] <- Heatmap(
-    r1.11_cor_mat,
-    name = "Spearman",
-
-    col    = colorRamp2(c(-1, 0, 1), c("blue", "white", "red")),
-    na_col = "gray90",
-
-    column_title = if (t == "mrna") {"THCA Expression"} else if (t == "meth") {"THCA Methylation"},
-
-    column_title_side = "top",
-    row_title_side    = "right",
-    
-    cluster_rows    = FALSE,
-    cluster_columns = FALSE,
-    
-    top_annotation  = anno_col_top,
-    left_annotation = anno_row_left,
-    
-    show_row_names    = FALSE,
-    show_column_names = FALSE,
-    
-    heatmap_legend_param = list(
-      at = c(-1, 0 ,1),
-      labels = c("-1", "0", "1"),
-      labels_gp = gpar(fontsize = 6),
-      title_gp = gpar(fontsize = 6),
-      legend_height = unit(1, "cm"),
-      grid_width = unit(0.2, "cm")
-    ),
-    
-    column_names_gp = gpar(fontsize = 6),
-    row_names_gp    = gpar(fontsize = 6),
-    column_title_gp = gpar(fontsize = 6),
-    row_title_gp    = gpar(fontsize = 6),
-
-    # Ht dimensions
-    width  = unit(4.0, "cm"),
-    height = unit(4.0, "cm")
-  )
+} else {
+  message("Loading 'pred_feat' from: ", sum_dir)
+  pred_feat <- readRDS(file = file.path(sum_dir, "summary_pred_feat.rds"))
 }
+
+### ancestry-specific effects -------------------------------------------------
+if (!file.exists(file = file.path(sum_dir, "summary_limma_res.rds"))) {
+
+  message("Preparing 'limma_res' from individual results.")
+  limma_res <- rbindlist(lapply(names(res_dirs), function(study) {
+    file_path <- file.path(res_dirs[[study]], "subset_limma_interaction_effect")
+    dge_files <- list.files(file_path, pattern = "dge_res\\.rds$", recursive = TRUE, full.names = TRUE)
+
+    cfg <- list.files(cfg_dirs[[study]])
+    message(sprintf("%s found %d/%d files.", study, length(dge_files), length(cfg)))
+
+    # Load all files
+    all_files <- lapply(dge_files, readRDS)
+    dt <- rbindlist(lapply(all_files, \(x) x$summary_stats), use.names = TRUE, fill = TRUE)
+
+    # Set phenotype
+    dt[, phenotype := fcase(
+      coef_id == "baseline_1", paste0(g_1),
+      coef_id == "baseline_2", paste0(g_2),
+      coef_id == "relationship_1", paste(g_1, "vs", g_2),
+      coef_id == "relationship_2", paste(g_1, "vs", g_2),
+      coef_id == "interaction", paste(g_1, "vs", g_2)
+    )]
+    dt[, phenotype := gsub("_", "-", phenotype)]
+    dt
+  }), fill = TRUE)
+
+  # Save
+  saveRDS(
+    object = limma_res,
+    file = file.path(
+      sum_dir,
+      "summary_limma_res.rds"
+    )
+  )
+
+} else {
+  message("Loading 'limma_res' from: ", sum_dir)
+  limma_res <- readRDS(file = file.path(sum_dir, "summary_limma_res.rds"))
+}
+
+### prediction roc auc        -------------------------------------------------
+if (!file.exists(file = file.path(sum_dir, "summary_pred_auc.rds"))) {
+
+  message("Preparing 'pred_auc' from individual results.")
+  pred_auc <- rbindlist(lapply(names(res_dirs), function(study) {
+
+    fp    <- file.path(res_dirs[[study]], "subset_logistic_regression_prediction")
+    files <- list.files(fp, "dge_res\\.rds$", recursive = TRUE, full.names = TRUE)
+    techs <- sub("_.*$", "", basename(dirname(files)))
+
+    cfg   <- list.files(cfg_dirs[[study]])
+    message(sprintf("%s found %d/%d files.", study, length(files), length(cfg)))
+
+    # List of subset stats + tech
+    dts <- Map(function(f,t) {
+      dt <- as.data.table(readRDS(f)$summary_stats)
+      dt[, tech := t]
+    }, files, techs)
+
+    # Add phenotype and study
+    out <- rbindlist(dts)
+    out[, phenotype := gsub("_", "-", paste(g_1, "vs", g_2))]
+    out[, study := study] 
+    out
+  }), use.names = TRUE, fill = TRUE)
+
+  # Save
+  saveRDS(
+    object = pred_auc,
+    file = file.path(
+      sum_dir,
+      "summary_pred_auc.rds"
+    )
+  )
+
+} else {
+  message("Loading 'pred_auc' from: ", sum_dir)
+  pred_auc <- readRDS(file = file.path(sum_dir, "summary_pred_auc.rds"))
+}
+
+
+## Main Figure 4 ==============================================================
+### panel B -------------------------------------------------------------------
+main4_panel_B <- ggplot(
+  data = pred_loss[, `:=`(
+        T_obs = log2(frac_mean),
+        p_adj = p.adjust(p_value, method = "BH")
+      )
+  ],
+  mapping = aes(
+    x = a_2,
+    y = rename_phenotype(phenotype),
+    color = T_obs,
+    size = -log10(p_adj)
+  )
+) +
+geom_point() +
+scale_color_gradient2(
+  name = expression(log[2] ~ (frac("non-EUR"["log loss"], "EUR"["log loss"]))),
+  low  = "#4575b4",
+  mid  = "white",
+  high = "#d73027",
+  midpoint = 0
+) +
+scale_size_continuous(
+  name = expression(-log[10] * ( "adj. p-value" )),
+  range = c(0.5, 2),
+  breaks = scales::pretty_breaks(n = 3)
+) +
+facet_grid(
+  cols = vars(tech),
+  rows = vars(study),
+  scales = "free_y",
+  space  = "free_y",
+  labeller = labeller(
+    tech  = c(
+      meth = "Methylation", 
+      mrna = "Expression"
+    )
+  )
+) +
+labs(
+  x = "Ancestry",
+  y = "Cancer comparison"
+) +
+theme_CrossAncestryGenPhen(
+  legend_key = 1,
+  rotate = 45,
+  show_borders = TRUE,
+  show_grid = FALSE
+) +
+theme(
+  panel.spacing.x = unit(0.15, "lines"),
+  panel.spacing.y = unit(0.15, "lines"),
+  legend.margin = margin(0, 0, 0, 0)
+)
 
 # Save
-for (ext in formats) {
-  save_heatmapsDK(
-    plot = r1.11_panel_A,
+for (ext in formats){
+  ggsaveDK(
+    plot = main4_panel_B,
     file = file.path(
-      fig_dir, 
-      paste0("r1.11_panel_A.", ext)
+      fig_dir_main, 
+      paste0("main4_panel_B.", ext)
     ),
-    height = 7.5,
-    width = 16,
-    ncol = 2,
-    bg = "white",
-    dpi = 300
+    height = 5,
+    width = 8,
+    trimmed = FALSE,
+    bg = "transparent"
   )
 }
 
-#### Panel B (Paper Figure 4E with L1 norm. weights ) -------------------------
+saveRDS(
+  object = main4_panel_B,
+  file = file.path(
+    fig_dir_main, 
+    "main4_panel_B.rds"
+  )
+)
+
+### panel C -------------------------------------------------------------------
+perm_auc <- pred_prob[,
+  {
+    # Observed AUC
+    auc_obs <- roc_auc_vec(
+      truth = droplevels(true),
+      estimate = prob,
+      event_level = "second"
+    )
+
+    # Permuted AUCs
+    auc_perm <- replicate(
+      100,
+      roc_auc_vec(
+        truth = sample(droplevels(true)),
+        estimate = prob,
+        event_level = "second"
+      )
+    )
+    rbindlist(list(
+      data.table(type = "Observed", AUC = auc_obs),
+      data.table(type = "Permuted", AUC = auc_perm)
+    ))
+  },
+  by = .(iteration, coef_id, coef_type, a_1, a_2, g_1, g_2, study, tech, phenotype)
+][,
+  .(
+    AUC_mean = mean(AUC),
+    CI_lower = quantile(AUC, 0.025, na.rm = TRUE),
+    CI_upper = quantile(AUC, 0.975, na.rm = TRUE),
+    n_iter   = uniqueN(iteration)
+  ),
+  by = .(type, coef_id, coef_type, a_1, a_2, g_1, g_2, study, tech, phenotype)
+]
+
+perm_auc[, ancestry := fifelse(coef_id == "relationship_X", a_1, a_2)]
+perm_auc[, ancestry := fifelse(ancestry == "EUR", "subset-EUR", "non-EUR")]
+perm_auc[, ancestry := factor(ancestry, levels = c("subset-EUR", "non-EUR"))]
+perm_auc[, set := fifelse(ancestry == "subset-EUR", "Validation (EUR)", "Inference (non-EUR)")]
+perm_auc[, set := factor(set, levels = c("Inference (non-EUR)", "Validation (EUR)"))]
+perm_auc[, phenotype_p := vs_newline(rename_phenotype(phenotype))]
+perm_auc[, phenotype_p := factor(phenotype_p, levels = c("Normal vs\nPrimary","Basal vs\nnon-Basal", "Luminal A vs\nLuminal B"))]
+
+# Sample number
+sample_n <- fread("results/tcga/analysis/summary_subset_logistic_regression_prediction/summary_sample_n.csv")
+sample_n[, phenotype := sub("^[a-zA-Z0-9]+_(.*)_EUR_vs_.*$", "\\1", comp)]
+sample_n[, phenotype := gsub("non_", "non-", phenotype)]
+sample_n[, phenotype := gsub("_", " ", phenotype)]
+
+sample_n[, g_col := gsub("_", "-", g_col)]
+sample_n[g_col == "LumA", g_col := "Luminal A"]
+sample_n[g_col == "LumB", g_col := "Luminal B"]
+
+sample_n[, phenotype := vs_newline(rename_phenotype(phenotype))]
+sample_n[, phenotype := factor(phenotype, levels = c("Normal vs\nPrimary", "Basal vs\nnon-Basal", "Luminal A vs\nLuminal B"))]
+
+# Plots
+p_list <- list()
+for (t in c("meth", "mrna")) {
+
+  # Common sample-size axis across technologies
+  sample_n_max <- max(
+    sample_n[study == "BRCA" & a_col %in% unique(perm_auc$a_2), n],
+    na.rm = TRUE
+  )
+  sample_n_limits <- c(0, sample_n_max * 1.15)
+  
+  # Calculate performance overlaps (obs. versus perm.)
+  perf_overlap <- merge(
+    perm_auc[study == "BRCA" & tech == t & type == "Observed", .(a_2, set, phenotype_p, tech, AUC_mean)],
+    perm_auc[study == "BRCA" & tech == t & type == "Permuted", .(a_2, set, phenotype_p, tech, CI_upper)],
+    by = c("a_2", "set", "phenotype_p", "tech")
+  )
+  
+  # Combine conditions: Inconclusive if error bar cross OR any group sample size < 5
+  inconclusive_c1 <- perf_overlap[CI_upper >= AUC_mean]
+  inconclusive_c1[, a_2 := factor(a_2, levels = levels(factor(perm_auc$a_2)))]
+  
+  # Format background table for sample sizes (C.1)
+  inconclusive_c2 <- copy(inconclusive_c1)
+  setnames(inconclusive_c2, old = c("a_2", "phenotype_p"), new = c("a_col", "phenotype"))
+  inconclusive_c2[, a_col := factor(a_col, levels = levels(factor(sample_n$a_col)))]
+
+  # Identify observed bars that are inconclusive
+  inconclusive_bars <- merge(
+    perm_auc[
+      study == "BRCA" &
+        tech == t &
+        type == "Observed",
+      .(a_2, set, phenotype_p, AUC_mean)
+    ],
+    inconclusive_c1[
+      , .(a_2, phenotype_p)
+    ],
+    by = c("a_2", "phenotype_p"),
+    allow.cartesian = TRUE
+  )
+
+  inconclusive_bars[, inconclusive_fill := fifelse(
+    set == "Validation (EUR)",
+    "Inconclusive Validation",
+    "Inconclusive Inference"
+  )]
+
+  # Plot model performance
+  p_c1 <- ggplot(
+    mapping = aes(x = a_2)
+  ) +
+  geom_col(
+    data = perm_auc[
+      study == "BRCA" &
+      tech == t &
+      type == "Observed"
+    ],
+    mapping = aes(
+      y = AUC_mean,
+      fill = set
+    ),
+    position = position_dodge(width = 0.9),
+    width = 0.9,
+    linewidth = 0
+  ) +
+  geom_col(
+    data = inconclusive_bars,
+    mapping = aes(
+      y = AUC_mean,
+      group = set,
+      fill = inconclusive_fill,
+      alpha = "Inconclusive"
+    ),
+    position = position_dodge(width = 0.9),
+    width = 0.9,
+    color = NA
+  ) +
+  geom_errorbar(
+    data = perm_auc[
+      study == "BRCA" &
+      tech == t &
+      type == "Permuted"
+    ],
+    mapping = aes(
+      ymin = CI_lower,
+      ymax = CI_upper,
+      group = set,
+      alpha = "Permuted AUC"
+    ),
+    position = position_dodge(width = 0.9),
+    width = 0.2,
+    linewidth = 0.3
+  ) +
+  geom_point(
+    data = perm_auc[
+      study == "BRCA" &
+      tech == t &
+      type == "Permuted"
+    ],
+    mapping = aes(
+      y = AUC_mean,
+      group = set,
+      alpha = "Permuted AUC"
+    ),
+    position = position_dodge(width = 0.9),
+    shape = 18,
+    size = 0.8
+  ) +
+  scale_fill_manual(
+    name = "Performance",
+    values = c(
+      "Inference (non-EUR)" = "orange",
+      "Validation (EUR)" = "#0072B2",
+      "Inconclusive Validation" = "grey65",
+      "Inconclusive Inference" = "grey85"
+    ),
+    breaks = c(
+      "Validation (EUR)",
+      "Inference (non-EUR)"
+    ),
+    labels = c(
+      "Validation (EUR)",
+      "Inference (non-EUR)"
+    ),
+    guide = guide_legend(order = 1)
+  ) +
+  scale_alpha_manual(
+    name = NULL,
+    values = c(
+      "Permuted AUC" = 1,
+      "Inconclusive" = 1
+    ),
+    breaks = c(
+      "Permuted AUC",
+      "Inconclusive"
+    ),
+    guide = guide_legend(
+      order = 2,
+      override.aes = list(
+        shape = c(18, 22),
+        fill = c("black", "grey85"),
+        color = c("black", "grey85"),
+        alpha = 1
+      )
+    )
+  ) +
+  scale_y_continuous(
+    breaks = scales::pretty_breaks(n = 4),
+    expand = expansion(mult = c(0.1, 0.1))
+  ) +
+  facet_grid(
+    rows = vars(phenotype_p),
+    scales = "free",
+    space = "free",
+    labeller = labeller(
+      phenotype = vs_newline,
+      tech = c(
+        meth = "Methylation",
+        mrna = "Expression"
+      )
+    )
+  ) +
+  coord_flip() +
+  labs(
+    x = "Ancestry",
+    y = "Mean ROC AUC"
+  ) +
+  theme_CrossAncestryGenPhen(
+    legend_key = 1,
+    show_borders = TRUE,
+    show_facets = TRUE
+  ) +
+  theme(
+    panel.spacing.x = unit(0.15, "lines"),
+    panel.spacing.y = unit(0.15, "lines"),
+    legend.margin = margin(0, 0, 0, 0),
+    strip.text.y = element_blank()
+  )
+  
+  # Plot sample sizes
+  p_c2 <- ggplot(
+    data = sample_n[
+      study == "BRCA" &
+      tech == t &
+      a_col %in% unique(perm_auc$a_2)
+    ],
+    mapping = aes(
+      x = a_col, 
+      y = n, 
+      fill = g_col
+    )
+  ) +
+  geom_col(
+    linewidth = 0, 
+    position = position_dodge(width = 0.9)
+  ) +
+  geom_text(
+    aes(label = n), 
+    position = position_dodge(width = 0.9),
+    hjust = -0.1,
+    size = 1.5, 
+    inherit.aes = TRUE
+  ) +
+  scale_fill_brewer(
+    name = "Cancer type", 
+    palette = "Set2",
+    breaks = c(
+      "Normal", 
+      "Primary", 
+      "Basal", 
+      "non-Basal", 
+      "Luminal A", 
+      "Luminal B"
+    )
+  ) + 
+  facet_grid(
+    rows = vars(phenotype), 
+    scales = "free", 
+    space = "free"
+  ) +
+  coord_flip(clip = "off") +
+  scale_y_continuous(
+    limits = sample_n_limits,
+    breaks = c(0, 50, 125),
+    expand = expansion(mult = c(0.05, 0.15))
+  ) +
+  labs(
+    x = "Ancestry", 
+    y = "Nr. samples"
+  ) +
+  theme_CrossAncestryGenPhen(
+    legend_key = 1, 
+    show_borders = FALSE
+  ) +
+  theme(
+    panel.spacing.x = unit(0.15, "lines"), 
+    panel.spacing.y = unit(0.15, "lines"),
+    legend.margin = margin(0, 0, 0, 0), 
+    plot.margin = margin(0, 0, 0, 0),
+    axis.title.y = element_blank(), 
+    axis.text.y = element_blank()
+  )
+
+  # Tech title
+  p_c3 <- ggplot(
+    data = sample_n[
+      study == "BRCA" &
+      tech == t &
+      a_col %in% unique(perm_auc$a_2)
+    ],
+    mapping = aes(
+      x = a_col, 
+      y = n, 
+      fill = g_col
+    )
+  ) +
+  facet_grid(
+    rows = vars(tech), 
+    scales = "free", 
+    space = "free",
+    labeller = labeller(
+      tech  = c(
+        meth = "Methylation", 
+        mrna = "Expression"
+      )
+    )
+  ) +
+  coord_flip(clip = "off") +
+  labs(
+    title = NULL,
+    x = NULL,
+    y = NULL
+  ) +
+  theme_CrossAncestryGenPhen(
+    show_borders = FALSE,
+    show_axis = FALSE
+  ) +
+  theme(
+    plot.margin = margin(0, 0, 0, 0),
+    strip.text.y = element_text(margin = margin(0, 0, 0, 0)),
+    axis.text.x = element_blank(),
+    axis.text.y = element_blank()
+  )
+  
+  # Append
+  p_list[[t]] <- wrap_plots(p_c1, p_c2, p_c3, ncol = 3, widths = c(0.9, 0.75, 0.0001))
+}
+
+main4_panel_C <- wrap_plots(
+  p_list[[1]] &
+  theme(
+    plot.margin  = margin(l = 0.1, t = 0, b = 0.1, r = 0.1, unit = "lines"),
+    axis.title.x = element_blank(),
+    axis.text.x  = element_blank()
+  ),
+  p_list[[2]] & 
+  theme(
+    plot.margin  = margin(l = 0.1, t = 0.1, b = 0, r = 0.1, unit = "lines")
+  ),
+  ncol = 1
+) + plot_layout(guides = "collect")
+
+# Save
+for (ext in formats){
+  ggsaveDK(
+    plot = main4_panel_C,
+    file = file.path(
+      fig_dir_main, 
+      paste0("main4_panel_C.", ext)
+    ),
+    height = 6,
+    width = 8,
+    trimmed = FALSE,
+    bg = "transparent"
+  )
+}
+
+saveRDS(
+  object = main4_panel_C,
+  file = file.path(
+    fig_dir_main, 
+    "main4_panel_C.rds"
+  )
+)
+
+### panel D -------------------------------------------------------------------
+overlap <- pred_feat[
+  , .(mean_estimate = mean(estimate, na.rm = TRUE)),
+  by = .(
+    coef_id, coef_type, contrast, g_1, g_2, 
+    a_1, a_2, study, tech, phenotype, feature
+  )
+][
+  limma_res[coef_id == "interaction"],
+  on = .(study, tech, phenotype, a_2, feature),
+  nomatch = 0
+][
+  , .(
+    n_sig     = sum(p_adj < target_alpha),
+    n_nonzero = sum(mean_estimate != 0),
+    n_both    = sum((p_adj < target_alpha) & (mean_estimate != 0)),
+    recall    = sum((p_adj < target_alpha) & (mean_estimate != 0)) / 
+                sum(mean_estimate != 0)
+  ),
+  by = .(study, tech, phenotype, a_2)
+]
+
+# Plot
+main4_panel_D <- ggplot(
+  mapping = aes(
+    x = a_2,
+    y = rename_phenotype(phenotype)
+  )
+) +
+geom_tile(
+  data = overlap[
+    recall == 0
+  ],
+  mapping = aes(
+    fill = "No overlap"
+  ),
+  color = "black",
+  linewidth = 0.1,
+  show.legend = TRUE
+) +
+scale_fill_manual(
+  name = NULL,
+  values = c("No overlap" = "grey90"),
+  guide = guide_legend(
+    override.aes = list(color = "black")
+  )
+) +
+ggnewscale::new_scale_fill() +
+geom_tile(
+  data = overlap[
+    recall != 0
+  ],
+  mapping = aes(
+    fill = recall
+  ),
+  color = "black",
+  linewidth = 0.1
+) +
+scale_fill_gradient(
+  name  = "Recall of\nancestry-specific\ngenes",
+  low   = "white",
+  high  = "gold",
+  guide = guide_colorbar(order = 1)
+) +
+facet_grid(
+  rows = vars(study),
+  cols = vars(tech),
+  scales = "free",
+  space  = "free",
+     labeller = labeller(
+    tech = c(meth = "Methylation", mrna = "Expression")
+  )
+) +
+labs(
+  x = "Ancestry",
+  y = "Cancer comparison"
+) +
+theme_CrossAncestryGenPhen(
+  legend_key = 1,
+  rotate = 45,
+  show_borders = TRUE
+) +
+theme(
+  panel.spacing.x = unit(0.15, "lines"),
+  panel.spacing.y = unit(0.15, "lines"),
+  legend.spacing.y = unit(10, "pt"),
+  legend.margin = margin(0, 0, 0, 0)
+) 
+
+# Save
+for (ext in formats){
+  ggsaveDK(
+    plot = main4_panel_D,
+    file = file.path(
+      fig_dir_main, 
+      paste0("main4_panel_D.", ext)
+    ),
+    height = 4,
+    width = 8,
+    trimmed = FALSE,
+    bg = "transparent"
+  )
+}
+
+saveRDS(
+  object = main4_panel_D,
+  file = file.path(
+    fig_dir_main, 
+    "main4_panel_D.rds"
+  )
+)
+
+### panel E -------------------------------------------------------------------
 feat <- unique(
   c(
-    subset_res[
+    limma_res[
       study == "BRCA" & 
       tech == "mrna" &
       phenotype == "Basal vs non-Basal" &
       coef_id == "interaction" &
-      p_adj < alpha
+      p_adj < target_alpha
     ][
       , .(feature = head(feature, 15)), 
       by = a_2
@@ -475,7 +910,8 @@ feat <- unique(
   )
 )
 
-r1.11 <- wrap_plots(
+# Plot
+main4_panel_E <- wrap_plots(
   ggplot(
     data = pred_feat[
       study == "BRCA" & 
@@ -540,7 +976,7 @@ r1.11 <- wrap_plots(
     axis.text.y = element_text(size = 4),
   ),
   ggplot(
-    data = subset_res[
+    data = limma_res[
       study == "BRCA" & 
       tech == "mrna" &
       phenotype == "Basal vs non-Basal" &
@@ -612,20 +1048,1315 @@ plot_layout(
 ) 
 
 # Save
+ggsaveDK(
+  plot = main4_panel_E,
+  file = file.path(
+    fig_dir_main, 
+    "main4_panel_E.svg"
+  ),
+  height = 12,
+  width = 10,
+  trimmed = FALSE,
+  bg = "transparent"
+)
+
+saveRDS(
+  object = main4_panel_E,
+  file = file.path(
+    fig_dir_main, 
+    "main4_panel_E.rds"
+  )
+)
+
+
+## Supplementary Figure 4 =====================================================
+### supp. 1 -------------------------------------------------------------------
+nr_degs <- limma_res[
+  coef_id == "interaction",
+  .(nr_degs = uniqueN(feature[p_adj <= target_alpha])),
+  by = .(study, phenotype, tech, a_2)
+][
+  , degs_val := log10(nr_degs + 1)
+][
+  pred_loss[
+    , .(study, phenotype, tech, a_2, loss_val = T_obs)
+  ],
+  on = .(study, phenotype, tech, a_2)
+]
+
+# Correlation
+nr_degs_cor <- nr_degs[
+  , `:=`(
+    ancestry_n = .N,
+    ancestry_cor = cor_safe(degs_val, loss_val, .N)
+  ),
+  by = .(tech, a_2)
+][
+  , `:=`(
+    across_n = .N,
+    across_cor = cor_safe(degs_val, loss_val, .N)
+  ),
+  by = tech
+][
+  , rbindlist(list(
+      unique(.SD[, .(
+        tech,
+        cor_type  = "Across",
+        cor_value = across_cor,
+        n         = across_n
+      )]),
+      unique(.SD[, .(
+        tech,
+        cor_type  = a_2,
+        cor_value = ancestry_cor,
+        n         = ancestry_n
+      )])
+    ))
+][
+  , cor_type := factor(
+      cor_type,
+      levels = c("Across", setdiff(unique(cor_type), "Across"))
+    )
+][
+  , cor_group := fifelse(cor_type == "Across", "Across", "Ancestry")
+][
+  , cor_group := factor(
+    cor_group, 
+    levels = c("Across", "Ancestry")
+  )
+]
+
+# Plot
+main4_supp1 <- wrap_plots(
+  ggplot(
+    data = nr_degs,
+    mapping = aes(
+      x = degs_val,
+      y = loss_val,
+      color = a_2
+    )
+  ) +
+  geom_polygon(
+    data = {
+
+      x <- nr_degs$degs_val
+      y <- nr_degs$loss_val
+      
+      lims <- range(c(x, y))
+      
+      data.frame(
+        x = c(lims[1], lims[1], lims[2]),
+        y = c(lims[2], lims[1], lims[2])
+      )
+    },
+    mapping = aes(
+      x = x, 
+      y = y
+    ),
+    inherit.aes = FALSE,
+    fill = "grey80",
+    alpha = 0.2
+  ) +
+  geom_point(
+    size = 0.5,
+    show.legend = FALSE
+  ) +
+  geom_smooth(
+    mapping = aes(
+      x = degs_val,
+      y = loss_val
+    ),
+    linewidth = 0.7,
+    formula = y ~ x,
+    method = "lm",
+    se = FALSE,
+    color = "blue",
+    inherit.aes = FALSE
+  ) +
+  scale_y_continuous(
+    breaks = scales::pretty_breaks(n = 3),
+    labels = scales::math_format(10^.x),
+    expand = expansion(mult = 0.1)
+  ) +
+  scale_x_continuous(
+    breaks = scales::pretty_breaks(n = 3),
+    labels = scales::math_format(10^.x),
+    expand = expansion(mult = 0.1)
+  ) +
+  facet_grid(
+    rows = vars(tech),
+    labeller = labeller(
+      tech = c(meth = "Methylation", mrna = "Expression"),
+    )
+  ) +
+  scale_color_manual(
+    values = ancestry_cols
+  ) +
+  labs(
+    color = "Ancestry",
+    x = "# interaction DEGs",
+    y = "log2FC of loss",
+  ) +
+  theme_CrossAncestryGenPhen(
+    legend_key = 1,
+    show_grid = FALSE,
+    show_borders = TRUE
+  ) +
+  theme(
+    panel.spacing.x = unit(0.15, "lines"),
+    panel.spacing.y = unit(0.15, "lines"),
+    legend.margin = margin(0, 0, 0, 0)
+  ),
+  ggplot(
+    data = nr_degs_cor,
+    mapping = aes(
+      x = cor_type,
+      y = cor_value,
+      fill = cor_type
+    )
+  ) +
+  geom_col(
+    na.rm = TRUE
+  ) +
+  facet_grid(
+    cols = vars(tech),
+    labeller = labeller(
+      tech = c(
+        meth = "Methylation", 
+        mrna = "Expression"
+      ),
+    )
+  ) +
+  scale_fill_manual(
+    values = c(
+      ancestry_cols,
+      Across = "blue"
+    )
+  ) +
+  labs(
+    fill = "Ancestry",
+    x = "Ancestry",
+    y = "Correlation (Pearson)"
+  ) +
+  theme_CrossAncestryGenPhen(
+    legend_key = 1,
+    rotate = 45
+  ) +
+  theme(
+    panel.spacing.x = unit(0.15, "lines"),
+    panel.spacing.y = unit(0.15, "lines"),
+    legend.margin = margin(0, 0, 0, 0)
+  ),
+  ncol = 2
+) + plot_annotation(
+  tag_levels = "a"
+) &
+theme(
+  plot.tag = element_text(
+    face = "bold",
+    size = 10
+  ),
+  plot.tag.position = c(0, 1)
+)
+
+# Save
 for (ext in formats) {
   ggsaveDK(
-    plot = r1.11,
+    plot = main4_supp1,
     file = file.path(
-      fig_dir, 
+      fig_dir_supp, 
       paste0(
-        "r1.11.", 
+        "main4_supp1.", 
         ext
       )
     ),
-    height = 13,
-    width = 10,
+    height = 7,
+    width = 16,
     trimmed = FALSE,
-    bg = "transparent",
+    bg = "transparent"
+  )
+}
+
+saveRDS(
+  object = main4_supp1,
+  file = file.path(
+    fig_dir_supp, 
+    "main4_supp1.rds"
+  )
+)
+
+
+## Supplementary Table 4 ======================================================
+### sample number           ---------------------------------------------------
+sample_nr <- read.csv(file.path(sum_dir, "summary_sample_n.csv"))
+names(sample_nr)[names(sample_nr) == "a_col"] <- "ancestry"
+names(sample_nr)[names(sample_nr) == "g_col"] <- "cancer"
+
+write.xlsx(sample_nr, file = file.path(tab_dir_supp, "sample_nr.xlsx"))
+
+
+
+## Review =====================================================================
+message("\nCreating review figures...")
+### review dirs ---------------------------------------------------------------
+fig_dir <- file.path("results_major_review", "tcga", "figures", "subset_logistic_regression_prediction", "review")
+tab_dir <- file.path("results_major_review", "tcga", "tables", "subset_logistic_regression_prediction", "review")
+if (!dir.exists(fig_dir)) dir.create(fig_dir, recursive = TRUE)
+if (!dir.exists(tab_dir)) dir.create(tab_dir, recursive = TRUE)
+
+
+## Reviewer 1 =================================================================
+### R1.11 ---------------------------------------------------------------------
+ht_list <- list()
+for (t in c("mrna", "meth")) {
+
+  calc_cb_mat <- function(m) {
+    n <- ncol(m)
+    res <- matrix(NA, n, n, dimnames = list(colnames(m), colnames(m)))
+    for(i in 1:n) {
+      for(j in 1:n) {
+        var_i <- var(m[,i])
+        var_j <- var(m[,j])
+        mean_i <- mean(m[,i])
+        mean_j <- mean(m[,j])
+        
+        if(var_i == 0 || var_j == 0) {
+          res[i,j] <- if(var_i == var_j && mean_i == mean_j) 1 else 0
+        } else {
+          v <- var_i / var_j
+          res[i,j] <- 2 / (v + 1/v + (mean_i - mean_j)^2 / sqrt(var_i * var_j + 1e-9))
+        }
+      }
+    }
+    return(res)
+  }
+
+  # Long format
+  dt <- pred_feat[study == "THCA" & tech == t]
+  dt[, model_id := paste(study, tech, phenotype, a_2, paste0("Iter", iteration), sep = ":")]
+  
+  # Wide format
+  dt_wide <- dcast(data = dt, formula = feature ~ model_id, value.var = c("estimate", "l1_norm"), sep = ":")
+  dt_wide <- na.omit(dt_wide)
+  
+  # Matrix
+  mat     <- as.matrix(dt_wide[, -1])
+  cor_mat <- calc_cb_mat(mat)
+  diag(cor_mat) <- NA
+
+  # Meta
+  meta <- data.frame(model_id = colnames(cor_mat), stringsAsFactors = FALSE)
+  meta$metric    <- sapply( strsplit(meta$model_id, ":"), function(x) x[1])
+  meta$metric    <- ifelse(meta$metric == "estimate", "Raw", "L1 norm.")
+  meta$study     <- sapply( strsplit(meta$model_id, ":"), function(x) x[2])
+  meta$tech      <- sapply( strsplit(meta$model_id, ":"), function(x) x[3])
+  meta$phenotype <- sapply( strsplit(meta$model_id, ":"), function(x) x[4])
+  meta$ancestry  <- sapply( strsplit(meta$model_id, ":"), function(x) x[5])
+  meta$iteration <- sapply( strsplit(meta$model_id, ":"), function(x) x[6])
+
+  # Top annotation 
+  anno_col_top <- HeatmapAnnotation(
+    `Model weight` = meta$metric,
+    Comparison     = meta$phenotype,
+    Ancestry       = meta$ancestry,
+    col = list(`Model weight` = weight_cols, Ancestry = ancestry_cols, `Comparison` = phenotype_cols),
+    annotation_name_side = "left",
+    show_annotation_name = TRUE,
+    annotation_name_gp   = gpar(fontsize = 6),
+    simple_anno_size     = unit(0.2, "cm"), 
+    show_legend = TRUE,
+    annotation_legend_param = list(`Model weight` = settings, Comparison = settings, Ancestry = settings)
+  )
+
+  # Left annotation
+  anno_row_left <- rowAnnotation(
+    `Model weight` = meta$metric,
+    Comparison     = meta$phenotype,
+    Ancestry       = meta$ancestry,
+    col = list(`Model weight` = weight_cols, Ancestry = ancestry_cols, Comparison = phenotype_cols),
+    annotation_name_side = "bottom",
+    show_annotation_name = FALSE,
+    annotation_name_gp   = gpar(fontsize = 6),
+    simple_anno_size = unit(0.2, "cm"), 
+    show_legend = FALSE,
+    annotation_legend_param = list(`Model weight` = settings, Comparison = settings, Ancestry = settings)
+  )
+  
+  # Heatmap 
+  ht_list[[t]] <- Heatmap(
+    matrix = cor_mat,
+    name   = "CCC",
+    col    = colorRamp2(c(0, 0.5, 1), c("white", "orange", "red")),
+    na_col = "gray90",
+
+    column_title      = if (t == "mrna") {"THCA Expression"} else if (t == "meth") {"THCA Methylation"},
+    column_title_side = "top",
+
+    row_title         = NULL,
+    row_title_side    = "right",
+    
+    cluster_rows    = FALSE,
+    cluster_columns = FALSE,
+    
+    top_annotation  = anno_col_top,
+    left_annotation = anno_row_left,
+    
+    show_row_names    = FALSE,
+    show_column_names = FALSE,
+    
+    heatmap_legend_param = list(
+      at = c(0, 0.5, 1),
+      labels = c("0", "0.5", "1"),
+      labels_gp = gpar(fontsize = 6),
+      title_gp = gpar(fontsize = 6),
+      legend_height = unit(1, "cm"),
+      grid_width = unit(0.2, "cm")
+    ),
+    
+    column_names_gp = gpar(fontsize = 6),
+    row_names_gp    = gpar(fontsize = 6),
+    column_title_gp = gpar(fontsize = 6),
+    row_title_gp    = gpar(fontsize = 6),
+
+    # Dimensions
+    width  = unit(4.0, "cm"),
+    height = unit(4.0, "cm")
+  )
+}
+
+# Save
+for (ext in formats) {
+  save_heatmapsDK(
+    plot = ht_list,
+    file = file.path(
+      fig_dir, 
+      paste0("r1.11.", ext)
+    ),
+    height = 7.5,
+    width = 16,
+    ncol = 2,
+    bg = "transparent"
+  )
+}
+
+saveRDS(
+  object = ht_list,
+  file = file.path(
+    fig_dir, 
+    "r1.11.rds"
+  )
+)
+
+### R1.14 ---------------------------------------------------------------------
+#### fig. 1 -------------------------------------------------------------------
+ht_list <- list()
+for (s in c("BRCA", "THCA", "UCEC")) {
+
+  ht_t <- list()
+  for (t in c("meth", "mrna")) {
+
+    # Long format
+    dt <- pred_feat[study == s & tech == t]
+    dt[, phenotype := rename_phenotype(phenotype)]
+    dt[, model_id := paste(study, tech, phenotype, a_2, paste0("Iter", iteration), sep = "_")]
+    
+    # Wide format
+    dt_wide <- dcast(data = dt, formula = feature ~ model_id, value.var = "l1_norm")
+    dt_wide <- na.omit(dt_wide)
+
+    # Matrix
+    mat     <- as.matrix(dt_wide[, -1])
+    cor_mat <- cor(mat, method = "spearman")
+    diag(cor_mat) <- NA
+    
+    # Meta
+    meta <- data.frame(model_id = colnames(cor_mat))
+    meta$phenotype <- sapply(strsplit(meta$model_id, "_"), function(x) x[3])
+    meta$ancestry  <- sapply(strsplit(meta$model_id, "_"), function(x) x[4])
+    
+    # Top annotation 
+    if (t == c("meth", "mrna")[1]) {
+      anno_col_top <- HeatmapAnnotation(
+        Comparison   = meta$phenotype,
+        Ancestry     = meta$ancestry,
+        col = list(Ancestry = ancestry_cols, Comparison = phenotype_cols),
+        annotation_name_side = "left",
+        show_annotation_name = TRUE,
+        annotation_name_gp   = gpar(fontsize = 6),
+        simple_anno_size     = unit(0.2, "cm"), 
+        show_legend = TRUE,
+        annotation_legend_param = list(Comparison = settings, Ancestry = settings)
+      )
+    } else {
+      anno_col_top <- NULL
+    }
+    
+    # Left annotation
+    anno_row_left <- rowAnnotation(
+      Comparison = meta$phenotype,
+      Ancestry   = meta$ancestry,
+      col = list(Ancestry = ancestry_cols, Comparison = phenotype_cols),
+      annotation_name_side = "bottom",
+      show_annotation_name = TRUE,
+      annotation_name_gp   = gpar(fontsize = 6),
+      simple_anno_size     = unit(0.2, "cm"), 
+      show_legend = FALSE,
+      annotation_legend_param = list(Comparison = settings, Ancestry = settings)
+    )
+    
+    # Heatmap
+    ht_t[[t]] <- ComplexHeatmap::Heatmap(
+      matrix = cor_mat,
+      name   = "Spearman",
+
+      col    = colorRamp2(c(-1, 0, 1), c("blue", "white", "red")),
+      na_col = "gray90",
+
+      column_title = s,
+      row_title    = if (t == "mrna") {"Expression"} else if (t == "meth") {"Methylation"},
+
+      column_title_side = "top",
+      row_title_side    = "right",
+      
+      cluster_rows    = FALSE,
+      cluster_columns = FALSE,
+      
+      top_annotation  = anno_col_top,
+      left_annotation = anno_row_left,
+      
+      show_row_names    = FALSE,
+      show_column_names = FALSE,
+      
+      heatmap_legend_param = list(
+        at = c(-1, 0 ,1),
+        labels = c("-1", "0", "1"),
+        labels_gp = gpar(fontsize = 6),
+        title_gp = gpar(fontsize = 6),
+        legend_height = unit(1, "cm"),
+        grid_width = unit(0.2, "cm")
+      ),
+      
+      column_names_gp = gpar(fontsize = 6),
+      row_names_gp    = gpar(fontsize = 6),
+      column_title_gp = gpar(fontsize = 6),
+      row_title_gp    = gpar(fontsize = 6),
+
+      # Dimensions
+      width  = unit(2.0, "cm"),
+      height = unit(2.0, "cm")
+    )
+  }
+  
+  ht_list[[s]] <- Reduce(`%v%`, ht_t)
+}
+
+# Save
+for (ext in formats) {
+  save_heatmapsDK(
+    plot = ht_list,
+    file = file.path(
+      fig_dir, 
+      paste0("r1.14.1.", ext)
+    ),
+    height = 9,
+    width = 16,
+    ncol = 3,
+    bg = "transparent"
+  )
+}
+
+saveRDS(
+  object = ht_list,
+  file = file.path(
+    fig_dir, 
+    "r1.14.1.rds"
+  )
+)
+
+#### fig. 2 -------------------------------------------------------------------
+ht_list <- list()
+for (s in c("BRCA", "THCA", "UCEC")) {
+
+  ht_t <- list()
+  for (t in c("meth", "mrna")) {
+
+    # Long format
+    dt <- pred_feat[study == s & tech == t]
+    dt[, phenotype := rename_phenotype(phenotype)]
+    dt[, model_id := paste(study, tech, phenotype, a_2, paste0("Iter", iteration), sep = "_")]
+    
+    # Wide format
+    dt_wide <- dcast(data = dt, formula = feature ~ model_id, value.var = "l1_norm")
+    dt_wide <- na.omit(dt_wide)
+
+    # Matrix
+    mat     <- as.matrix(dt_wide[, -1])
+    cor_mat <- cor(mat, method = "pearson")
+    diag(cor_mat) <- NA
+    
+    # Meta
+    meta <- data.frame(model_id = colnames(cor_mat))
+    meta$phenotype <- sapply(strsplit(meta$model_id, "_"), function(x) x[3])
+    meta$ancestry  <- sapply(strsplit(meta$model_id, "_"), function(x) x[4])
+    
+    # Top annotation 
+    if (t == c("meth", "mrna")[1]) {
+      anno_col_top <- HeatmapAnnotation(
+        Comparison   = meta$phenotype,
+        Ancestry     = meta$ancestry,
+        col = list(Ancestry = ancestry_cols, Comparison = phenotype_cols),
+        annotation_name_side = "left",
+        show_annotation_name = TRUE,
+        annotation_name_gp   = gpar(fontsize = 6),
+        simple_anno_size     = unit(0.2, "cm"), 
+        show_legend = TRUE,
+        annotation_legend_param = list(Comparison = settings, Ancestry = settings)
+      )
+    } else {
+      anno_col_top <- NULL
+    }
+    
+    # Left annotation
+    anno_row_left <- rowAnnotation(
+      Comparison = meta$phenotype,
+      Ancestry   = meta$ancestry,
+      col = list(Ancestry = ancestry_cols, Comparison = phenotype_cols),
+      annotation_name_side = "bottom",
+      show_annotation_name = TRUE,
+      annotation_name_gp   = gpar(fontsize = 6),
+      simple_anno_size     = unit(0.2, "cm"), 
+      show_legend = FALSE,
+      annotation_legend_param = list(Comparison = settings, Ancestry = settings)
+    )
+    
+    # Heatmap
+    ht_t[[t]] <- ComplexHeatmap::Heatmap(
+      matrix = cor_mat,
+      name   = "Spearman",
+
+      col    = colorRamp2(c(-1, 0, 1), c("blue", "white", "red")),
+      na_col = "gray90",
+
+      column_title = s,
+      row_title    = if (t == "mrna") {"Expression"} else if (t == "meth") {"Methylation"},
+
+      column_title_side = "top",
+      row_title_side    = "right",
+      
+      cluster_rows    = FALSE,
+      cluster_columns = FALSE,
+      
+      top_annotation  = anno_col_top,
+      left_annotation = anno_row_left,
+      
+      show_row_names    = FALSE,
+      show_column_names = FALSE,
+      
+      heatmap_legend_param = list(
+        at = c(-1, 0 ,1),
+        labels = c("-1", "0", "1"),
+        labels_gp = gpar(fontsize = 6),
+        title_gp = gpar(fontsize = 6),
+        legend_height = unit(1, "cm"),
+        grid_width = unit(0.2, "cm")
+      ),
+      
+      column_names_gp = gpar(fontsize = 6),
+      row_names_gp    = gpar(fontsize = 6),
+      column_title_gp = gpar(fontsize = 6),
+      row_title_gp    = gpar(fontsize = 6),
+
+      # Dimensions
+      width  = unit(2.0, "cm"),
+      height = unit(2.0, "cm")
+    )
+  }
+  
+  ht_list[[s]] <- Reduce(`%v%`, ht_t)
+}
+
+# Save
+for (ext in formats) {
+  save_heatmapsDK(
+    plot = ht_list,
+    file = file.path(
+      fig_dir, 
+      paste0("r1.14.2.", ext)
+    ),
+    height = 9,
+    width = 16,
+    ncol = 3,
+    bg = "transparent"
+  )
+}
+
+saveRDS(
+  object = ht_list,
+  file = file.path(
+    fig_dir, 
+    "r1.14.2.rds"
+  )
+)
+
+#### fig. 3 -------------------------------------------------------------------
+ht_list <- list()
+for (s in c("BRCA", "THCA", "UCEC")) {
+
+  ht_t <- list()
+  for (t in c("meth", "mrna")) {
+    
+    # Long format
+    dt <- pred_feat[study == s & tech == t]
+    dt[, phenotype := rename_phenotype(phenotype)]
+    dt[, model_id := paste(study, tech, phenotype, a_2, paste0("Iter", iteration), sep = "_")]
+    
+    # Top 100 features per model
+    model_names  <- unique(dt$model_id)
+    top_100_list <- list()
+    
+    for (mod in model_names) {
+      mod_data            <- dt[model_id == mod][order(-abs(l1_norm))]
+      top_features        <- mod_data[l1_norm != 0, feature][1:100]
+      top_100_list[[mod]] <- na.omit(top_features)
+    }
+    
+    # Jaccard matrix
+    n_models <- length(model_names)
+    jaccard_mat <- matrix(NA, nrow = n_models, ncol = n_models, dimnames = list(model_names, model_names))
+    
+    for (i in 1:n_models) {
+      for (j in 1:n_models) {
+        if (i == j) {
+          jaccard_mat[i, j] <- NA 
+        } else {
+          set_A <- top_100_list[[model_names[i]]]
+          set_B <- top_100_list[[model_names[j]]]
+          
+          intersection <- length(intersect(set_A, set_B))
+          union_set    <- length(union(set_A, set_B))
+          
+          jaccard_mat[i, j] <- if (union_set > 0) intersection / union_set else 0
+        }
+      }
+    }
+    
+    # Meta
+    meta <- data.frame(model_id = colnames(jaccard_mat))
+    meta$phenotype <- sapply(strsplit(meta$model_id, "_"), function(x) x[3])
+    meta$ancestry  <- sapply(strsplit(meta$model_id, "_"), function(x) x[4])
+    
+    # Top annotation 
+    if (t == c("meth", "mrna")[1]) {
+      anno_col_top <- HeatmapAnnotation(
+        Comparison   = meta$phenotype,
+        Ancestry     = meta$ancestry,
+        col = list(Ancestry = ancestry_cols, Comparison = phenotype_cols),
+        annotation_name_side = "left",
+        show_annotation_name = TRUE,
+        annotation_name_gp   = gpar(fontsize = 6),
+        simple_anno_size     = unit(0.2, "cm"), 
+        show_legend = TRUE,
+        annotation_legend_param = list(Comparison = settings, Ancestry = settings)
+      )
+    } else {
+      anno_col_top <- NULL
+    }
+    
+    # Left annotation
+    anno_row_left <- rowAnnotation(
+      Comparison = meta$phenotype,
+      Ancestry   = meta$ancestry,
+      col = list(Ancestry = ancestry_cols, Comparison = phenotype_cols),
+      annotation_name_side = "bottom",
+      show_annotation_name = TRUE,
+      annotation_name_gp   = gpar(fontsize = 6),
+      simple_anno_size     = unit(0.2, "cm"), 
+      show_legend = FALSE,
+      annotation_legend_param = list(Comparison = settings, Ancestry = settings)
+    )
+    
+    # Heatmap
+    ht_t[[t]] <- ComplexHeatmap::Heatmap(
+      jaccard_mat,
+      name = "Jaccard\ntop 100",
+      
+      col    = colorRamp2(c(0, 0.5, 1), c("white", "orange", "red")),
+      na_col = "gray90",
+
+      column_title = s,
+      row_title    = if (t == "mrna") {"Expression"} else if (t == "meth") {"Methylation"},
+
+      column_title_side = "top",
+      row_title_side    = "right",
+      
+      cluster_rows    = FALSE,
+      cluster_columns = FALSE,
+      
+      top_annotation  = anno_col_top,
+      left_annotation = anno_row_left,
+      
+      show_row_names    = FALSE,
+      show_column_names = FALSE,
+      
+      heatmap_legend_param = list(
+        at = c(-1, 0 ,1),
+        labels = c("-1", "0", "1"),
+        labels_gp = gpar(fontsize = 6),
+        title_gp = gpar(fontsize = 6),
+        legend_height = unit(1, "cm"),
+        grid_width = unit(0.2, "cm")
+      ),
+      
+      column_names_gp = gpar(fontsize = 6),
+      row_names_gp    = gpar(fontsize = 6),
+      column_title_gp = gpar(fontsize = 6),
+      row_title_gp    = gpar(fontsize = 6),
+
+      # Dimensions
+      width  = unit(2.0, "cm"),
+      height = unit(2.0, "cm")
+    )
+  }
+
+  ht_list[[s]] <- Reduce(`%v%`, ht_t)
+}
+
+# Save
+for (ext in formats) {
+  save_heatmapsDK(
+    plot = ht_list,
+    file = file.path(
+      fig_dir, 
+      paste0("r1.14.3.", ext)
+    ),
+    height = 9,
+    width = 16,
+    ncol = 3,
+    bg = "transparent"
+  )
+}
+
+saveRDS(
+  object = ht_list,
+  file = file.path(
+    fig_dir, 
+    "r1.14.3.rds"
+  )
+)
+
+#### fig. 4 -------------------------------------------------------------------
+ht_list <- list()
+for (s in c("BRCA", "THCA", "UCEC")) {
+
+  ht_t <- list()
+  for (t in c("meth", "mrna")) {
+    
+    # Long format
+    dt <- pred_feat[study == s & tech == t]
+    dt[, phenotype := rename_phenotype(phenotype)]
+    dt[, model_id := paste(study, tech, phenotype, a_2, paste0("Iter", iteration), sep = "_")]
+    
+    # Top 100 features per model
+    model_names  <- unique(dt$model_id)
+    top_50_list <- list()
+    
+    for (mod in model_names) {
+      mod_data            <- dt[model_id == mod][order(-abs(l1_norm))]
+      top_features        <- mod_data[l1_norm != 0, feature][1:50]
+      top_50_list[[mod]] <- na.omit(top_features)
+    }
+    
+    # Jaccard matrix
+    n_models <- length(model_names)
+    jaccard_mat <- matrix(NA, nrow = n_models, ncol = n_models, dimnames = list(model_names, model_names))
+    
+    for (i in 1:n_models) {
+      for (j in 1:n_models) {
+        if (i == j) {
+          jaccard_mat[i, j] <- NA 
+        } else {
+          set_A <- top_50_list[[model_names[i]]]
+          set_B <- top_50_list[[model_names[j]]]
+          
+          intersection <- length(intersect(set_A, set_B))
+          union_set    <- length(union(set_A, set_B))
+          
+          jaccard_mat[i, j] <- if (union_set > 0) intersection / union_set else 0
+        }
+      }
+    }
+    
+    # Meta
+    meta <- data.frame(model_id = colnames(jaccard_mat))
+    meta$phenotype <- sapply(strsplit(meta$model_id, "_"), function(x) x[3])
+    meta$ancestry  <- sapply(strsplit(meta$model_id, "_"), function(x) x[4])
+    
+    # Top annotation 
+    if (t == c("meth", "mrna")[1]) {
+      anno_col_top <- HeatmapAnnotation(
+        Comparison   = meta$phenotype,
+        Ancestry     = meta$ancestry,
+        col = list(Ancestry = ancestry_cols, Comparison = phenotype_cols),
+        annotation_name_side = "left",
+        show_annotation_name = TRUE,
+        annotation_name_gp   = gpar(fontsize = 6),
+        simple_anno_size     = unit(0.2, "cm"), 
+        show_legend = TRUE,
+        annotation_legend_param = list(Comparison = settings, Ancestry = settings)
+      )
+    } else {
+      anno_col_top <- NULL
+    }
+    
+    # Left annotation
+    anno_row_left <- rowAnnotation(
+      Comparison = meta$phenotype,
+      Ancestry   = meta$ancestry,
+      col = list(Ancestry = ancestry_cols, Comparison = phenotype_cols),
+      annotation_name_side = "bottom",
+      show_annotation_name = TRUE,
+      annotation_name_gp   = gpar(fontsize = 6),
+      simple_anno_size     = unit(0.2, "cm"), 
+      show_legend = FALSE,
+      annotation_legend_param = list(Comparison = settings, Ancestry = settings)
+    )
+    
+    # Heatmap
+    ht_t[[t]] <- ComplexHeatmap::Heatmap(
+      jaccard_mat,
+      name = "Jaccard\ntop 50",
+      
+      col    = colorRamp2(c(0, 0.5, 1), c("white", "orange", "red")),
+      na_col = "gray90",
+
+      column_title = s,
+      row_title    = if (t == "mrna") {"Expression"} else if (t == "meth") {"Methylation"},
+
+      column_title_side = "top",
+      row_title_side    = "right",
+      
+      cluster_rows    = FALSE,
+      cluster_columns = FALSE,
+      
+      top_annotation  = anno_col_top,
+      left_annotation = anno_row_left,
+      
+      show_row_names    = FALSE,
+      show_column_names = FALSE,
+      
+      heatmap_legend_param = list(
+        at = c(-1, 0 ,1),
+        labels = c("-1", "0", "1"),
+        labels_gp = gpar(fontsize = 6),
+        title_gp = gpar(fontsize = 6),
+        legend_height = unit(1, "cm"),
+        grid_width = unit(0.2, "cm")
+      ),
+      
+      column_names_gp = gpar(fontsize = 6),
+      row_names_gp    = gpar(fontsize = 6),
+      column_title_gp = gpar(fontsize = 6),
+      row_title_gp    = gpar(fontsize = 6),
+
+      # Dimensions
+      width  = unit(2.0, "cm"),
+      height = unit(2.0, "cm")
+    )
+  }
+
+  ht_list[[s]] <- Reduce(`%v%`, ht_t)
+}
+
+# Save
+for (ext in formats) {
+  save_heatmapsDK(
+    plot = ht_list,
+    file = file.path(
+      fig_dir, 
+      paste0("r1.14.4.", ext)
+    ),
+    height = 9,
+    width = 16,
+    ncol = 3,
+    bg = "transparent"
+  )
+}
+
+saveRDS(
+  object = ht_list,
+  file = file.path(
+    fig_dir, 
+    "r1.14.4.rds"
+  )
+)
+
+#### fig. 5 -------------------------------------------------------------------
+sig_features_dt <- limma_res[
+  coef_id == "interaction" & p_adj < target_alpha, 
+  .(study, tech, phenotype, a_2, feature)
+]
+
+
+## Rerun results ==============================================================
+### res directories           -------------------------------------------------
+res_dirs <- list(
+  BRCA = file.path("results_major_review", "tcga", "analysis", "TCGA_BRCA"),
+  UCEC = file.path("results_major_review", "tcga", "analysis", "TCGA_UCEC"),
+  THCA = file.path("results_major_review", "tcga", "analysis", "TCGA_THCA")
+)
+sum_dir <- file.path("results_major_review", "tcga", "analysis", "summary_subset_logistic_regression_prediction")
+stopifnot(length(unique(dirname(c(unlist(res_dirs), sum_dir)))) == 1)
+
+cfg_dirs <- list(
+  BRCA = file.path("configs", "tcga", "TCGA_BRCA"),
+  UCEC = file.path("configs", "tcga", "TCGA_UCEC"),
+  THCA = file.path("configs", "tcga", "TCGA_THCA")
+)
+
+### prediction loss fraction  -------------------------------------------------
+if (!file.exists(file = file.path(sum_dir, "summary_pred_loss.rds"))) {
+
+  message("Preparing 'pred_loss' from individual results.")
+  pred_loss <- rbindlist(lapply(names(res_dirs), function(study) {
+
+      fp    <- file.path(res_dirs[[study]], "subset_logistic_regression_prediction")
+      files <- list.files(fp, "dge_res\\.rds$", recursive = TRUE, full.names = TRUE)
+      techs <- sub("_.*$", "", basename(dirname(files)))
+
+      cfg   <- list.files(cfg_dirs[[study]])
+      message(sprintf("%s found %d/%d files.", study, length(files), length(cfg)))
+
+      # List of subset stats + tech
+      dts <- Map(function(f,t) {
+        dt <- as.data.table(readRDS(f)$subsets_stats)
+        dt[, tech := t]
+      }, files, techs)
+
+      # Compute log losses → fractional summaries → bind
+      ll <- lapply(dts, function(dt)
+        dt[, .(logloss = mn_log_loss_vec(
+          truth = droplevels(true), estimate = prob, event_level = "second")),
+          by = .(iteration, coef_id, g_1, g_2, a_1, a_2, tech)]
+      )
+
+      # Summaries
+      fr <- lapply(ll, function(dt) {
+        meta <- unique(dt[, .(g_1, g_2, a_1, a_2, tech)])
+        w <- dcast(dt, iteration ~ coef_id, value.var = "logloss")
+        w[, frac := relationship_Y / relationship_X]
+
+        # Add p-values
+        B <- nrow(w)                                    # nr. of EUR-subsets
+        p_left  <- (1 + sum(w$frac <= 1)) / (B + 1)     # tests frac > 1
+        p_right <- (1 + sum(w$frac >= 1)) / (B + 1)     # tests frac < 1
+        p_two_sided <- min(1, 2 * min(p_left, p_right)) # symmetric test
+
+        sm <- w[, .(
+            frac_mean = mean(frac),
+            frac_q025 = quantile(frac, 0.025),
+            frac_q975 = quantile(frac, 0.975),
+            p_value   = p_two_sided
+        )]
+
+        cbind(meta, sm)
+      })
+
+    # Add phenotype and study
+    out <- rbindlist(fr)
+    out[, phenotype := gsub("_", "-", paste(g_1, "vs", g_2))]
+    out[, study := study] 
+    out
+  }), use.names = TRUE, fill = TRUE)
+
+  # Save
+  saveRDS(
+    object = pred_loss,
+    file = file.path(
+      sum_dir,
+      "summary_pred_loss.rds"
+    )
+  )
+
+} else {
+  message("Loading 'pred_loss' from: ", sum_dir)
+  pred_loss <- readRDS(file = file.path(sum_dir, "summary_pred_loss.rds"))
+}
+
+### prediction probabilities  -------------------------------------------------
+if (!file.exists(file = file.path(sum_dir, "summary_pred_prob.rds"))) {
+
+  message("Preparing 'pred_prob' from individual results.")
+  pred_prob <- rbindlist(lapply(names(res_dirs), function(study) {
+      ## Files 
+      fp    <- file.path(res_dirs[[study]], "subset_logistic_regression_prediction")
+      files <- list.files(fp, "dge_res\\.rds$", recursive = TRUE, full.names = TRUE)
+      techs <- sub("_.*$", "", basename(dirname(files)))
+
+      cfg   <- list.files(cfg_dirs[[study]])
+      message(sprintf("%s found %d/%d files.", study, length(files), length(cfg)))
+
+      # List of subset stats + tech
+      dts <- Map(function(f,t) {
+        dt <- as.data.table(readRDS(f)$subsets_stats)
+        dt[, tech := t]
+      }, files, techs)
+
+      # Output
+      out <- rbindlist(dts)
+      out[, phenotype := gsub("_", "-", paste(g_1, "vs", g_2))]
+      out[, study := study] 
+      out
+  }), use.names = TRUE, fill = TRUE)
+
+  # Save
+  saveRDS(
+    object = pred_prob,
+    file = file.path(
+      sum_dir,
+      "summary_pred_prob.rds"
+    )
+  )
+
+} else {
+  message("Loading 'pred_prob' from: ", sum_dir)
+  pred_prob <- readRDS(file = file.path(sum_dir, "summary_pred_prob.rds"))
+}
+
+### prediction features       -------------------------------------------------
+if (!file.exists(file = file.path(sum_dir, "summary_pred_feat.rds"))) {
+
+  message("Preparing 'pred_feat' from individual results.")
+  pred_feat <- rbindlist(lapply(names(res_dirs), function(study) {
+
+    fp    <- file.path(res_dirs[[study]], "subset_logistic_regression_prediction")
+    files <- list.files(fp, "dge_res\\.rds$", recursive = TRUE, full.names = TRUE)
+    techs <- sub("_.*$", "", basename(dirname(files)))
+
+    cfg   <- list.files(cfg_dirs[[study]])
+    message(sprintf("%s found %d/%d files.", study, length(files), length(cfg)))
+
+    # List of subset stats + tech
+    dts <- Map(function(f,t) {
+      dt <- as.data.table(readRDS(f)$feature_stats)
+      dt[, tech := t]
+      dt[, l1_norm := estimate / sum(abs(estimate)), by = .(iteration)]
+      dt
+    }, files, techs)
+
+    # Add phenotype and study
+    out <- rbindlist(dts)
+    out[, phenotype := gsub("_", "-", paste(g_1, "vs", g_2))]
+    out[, study := study] 
+    out
+  }), use.names = TRUE, fill = TRUE)
+
+  # Save
+  saveRDS(
+    object = pred_feat,
+    file = file.path(
+      sum_dir,
+      "summary_pred_feat.rds"
+    )
+  )
+
+} else {
+  message("Loading 'pred_feat' from: ", sum_dir)
+  pred_feat <- readRDS(file = file.path(sum_dir, "summary_pred_feat.rds"))
+}
+
+### ancestry-specific effects -------------------------------------------------
+if (!file.exists(file = file.path(sum_dir, "summary_limma_res.rds"))) {
+
+  message("Preparing 'limma_res' from individual results.")
+  limma_res <- rbindlist(lapply(names(res_dirs), function(study) {
+    file_path <- file.path(res_dirs[[study]], "subset_limma_interaction_effect")
+    dge_files <- list.files(file_path, pattern = "dge_res\\.rds$", recursive = TRUE, full.names = TRUE)
+
+    cfg <- list.files(cfg_dirs[[study]])
+    message(sprintf("%s found %d/%d files.", study, length(dge_files), length(cfg)))
+
+    # Load all files
+    all_files <- lapply(dge_files, readRDS)
+    dt <- rbindlist(lapply(all_files, \(x) x$summary_stats), use.names = TRUE, fill = TRUE)
+
+    # Set phenotype
+    dt[, phenotype := fcase(
+      coef_id == "baseline_1", paste0(g_1),
+      coef_id == "baseline_2", paste0(g_2),
+      coef_id == "relationship_1", paste(g_1, "vs", g_2),
+      coef_id == "relationship_2", paste(g_1, "vs", g_2),
+      coef_id == "interaction", paste(g_1, "vs", g_2)
+    )]
+    dt[, phenotype := gsub("_", "-", phenotype)]
+    dt
+  }), fill = TRUE)
+
+  # Save
+  saveRDS(
+    object = limma_res,
+    file = file.path(
+      sum_dir,
+      "summary_limma_res.rds"
+    )
+  )
+
+} else {
+  message("Loading 'limma_res' from: ", sum_dir)
+  limma_res <- readRDS(file = file.path(sum_dir, "summary_limma_res.rds"))
+}
+
+### prediction roc auc        -------------------------------------------------
+if (!file.exists(file = file.path(sum_dir, "summary_pred_auc.rds"))) {
+
+  message("Preparing 'pred_auc' from individual results.")
+  pred_auc <- rbindlist(lapply(names(res_dirs), function(study) {
+
+    fp    <- file.path(res_dirs[[study]], "subset_logistic_regression_prediction")
+    files <- list.files(fp, "dge_res\\.rds$", recursive = TRUE, full.names = TRUE)
+    techs <- sub("_.*$", "", basename(dirname(files)))
+
+    cfg   <- list.files(cfg_dirs[[study]])
+    message(sprintf("%s found %d/%d files.", study, length(files), length(cfg)))
+
+    # List of subset stats + tech
+    dts <- Map(function(f,t) {
+      dt <- as.data.table(readRDS(f)$summary_stats)
+      dt[, tech := t]
+    }, files, techs)
+
+    # Add phenotype and study
+    out <- rbindlist(dts)
+    out[, phenotype := gsub("_", "-", paste(g_1, "vs", g_2))]
+    out[, study := study] 
+    out
+  }), use.names = TRUE, fill = TRUE)
+
+   # Save
+  aveRDS(
+    object = pred_auc,
+    file = file.path(
+      sum_dir,
+      "summary_pred_auc.rds"
+    )
+  )
+
+} else {
+  message("Loading 'pred_auc' from: ", sum_dir)
+  pred_auc <- readRDS(file = file.path(sum_dir, "summary_pred_auc.rds"))
+}
+
+
+## Reviewer 1 =================================================================
+### R1.07 ---------------------------------------------------------------------
+### R1.11 ---------------------------------------------------------------------
+p_list <- list()
+for (t in c("mrna", "meth")) {
+  
+  # Long format
+  dt <- pred_feat[study == "THCA" & tech == t]
+  dt[, model_id := paste(study, tech, phenotype, a_2, paste0("Iter", iteration), sep = ":")]
+  
+  # Wide format
+  dt_wide <- dcast(data = dt, formula = feature ~ model_id, value.var = c("estimate", "l1_norm"), sep = ":")
+  dt_wide <- na.omit(dt_wide)
+  
+  # Matrix
+  mat     <- as.matrix(dt_wide[, -1])
+  cor_mat <- cor(mat, method = "spearman")
+  diag(cor_mat) <- NA
+
+  # Meta
+  meta <- data.frame(model_id = colnames(cor_mat), stringsAsFactors = FALSE)
+  meta$metric    <- sapply( strsplit(meta$model_id, ":"), function(x) x[1])
+  meta$metric    <- ifelse(meta$metric == "estimate", "Raw", "L1 norm.")
+  meta$study     <- sapply( strsplit(meta$model_id, ":"), function(x) x[2])
+  meta$tech      <- sapply( strsplit(meta$model_id, ":"), function(x) x[3])
+  meta$phenotype <- sapply( strsplit(meta$model_id, ":"), function(x) x[4])
+  meta$ancestry  <- sapply( strsplit(meta$model_id, ":"), function(x) x[5])
+  meta$iteration <- sapply( strsplit(meta$model_id, ":"), function(x) x[6])
+
+  # Top annotation 
+  anno_col_top <- HeatmapAnnotation(
+    `Model weight` = meta$metric,
+    Comparison     = meta$phenotype,
+    Ancestry       = meta$ancestry,
+    col = list(`Model weight` = weight_cols, Ancestry = ancestry_cols, `Comparison` = phenotype_cols),
+    annotation_name_side = "left",
+    show_annotation_name = TRUE,
+    annotation_name_gp   = gpar(fontsize = 6),
+    simple_anno_size     = unit(0.2, "cm"), 
+    show_legend = TRUE,
+    annotation_legend_param = list(`Model weight` = settings, Comparison = settings, Ancestry = settings)
+  )
+
+  # Left annotation
+  anno_row_left <- rowAnnotation(
+    `Model weight` = meta$metric,
+    Comparison     = meta$phenotype,
+    Ancestry       = meta$ancestry,
+    col = list(`Model weight` = weight_cols, Ancestry = ancestry_cols, Comparison = phenotype_cols),
+    annotation_name_side = "bottom",
+    show_annotation_name = FALSE,
+    annotation_name_gp   = gpar(fontsize = 6),
+    simple_anno_size = unit(0.2, "cm"), 
+    show_legend = FALSE,
+    annotation_legend_param = list(`Model weight` = settings, Comparison = settings, Ancestry = settings)
+  )
+  
+  # Heatmap 
+  p_list[[t]] <- Heatmap(
+    matrix = cor_mat,
+    name   = "Spearman",
+    col    = colorRamp2(c(-1, 0, 1), c("blue", "white", "red")),
+    na_col = "gray90",
+
+    column_title      = if (t == "mrna") {"THCA Expression"} else if (t == "meth") {"THCA Methylation"},
+    column_title_side = "top",
+
+    row_title         = NULL,
+    row_title_side    = "right",
+    
+    cluster_rows    = FALSE,
+    cluster_columns = FALSE,
+    
+    top_annotation  = anno_col_top,
+    left_annotation = anno_row_left,
+    
+    show_row_names    = FALSE,
+    show_column_names = FALSE,
+    
+    heatmap_legend_param = list(
+      at = c(-1, 0 ,1),
+      labels = c("-1", "0", "1"),
+      labels_gp = gpar(fontsize = 6),
+      title_gp = gpar(fontsize = 6),
+      legend_height = unit(1, "cm"),
+      grid_width = unit(0.2, "cm")
+    ),
+    
+    column_names_gp = gpar(fontsize = 6),
+    row_names_gp    = gpar(fontsize = 6),
+    column_title_gp = gpar(fontsize = 6),
+    row_title_gp    = gpar(fontsize = 6),
+
+    # Dimensions
+    width  = unit(4.0, "cm"),
+    height = unit(4.0, "cm")
+  )
+}
+
+# Save
+for (ext in formats) {
+  save_heatmapsDK(
+    plot = p_list,
+    file = file.path(
+      fig_dir, 
+      paste0("r1.11_panel_A.", ext)
+    ),
+    height = 7.5,
+    width = 16,
+    ncol = 2,
+    bg = "white",
     dpi = 300
   )
 }
@@ -633,13 +2364,6 @@ for (ext in formats) {
 ### R1.14 ---------------------------------------------------------------------
 #### Panel A ------------------------------------------------------------------
 # Overall robustness of model weights across trained models (Spearman)
-
-settings <- list(
-  title_gp    = gpar(fontsize = 6),
-  labels_gp   = gpar(fontsize = 6),
-  grid_width  = unit(0.2, "cm"), 
-  grid_height = unit(0.2, "cm")
-)
 
 studies <- c("BRCA", "THCA", "UCEC")
 techs   <- c("mrna", "meth") 
@@ -1199,8 +2923,8 @@ for (ext in formats) {
 #### Panel E (Histogram of model weights for all ancestry-specific genes) ------
 # Robustness of ancestry-specific model weights (across significant genes)
 
-sig_features_dt <- subset_res[
-  coef_id == "interaction" & p_adj < alpha, 
+sig_features_dt <- limma_res[
+  coef_id == "interaction" & p_adj < target_alpha, 
   .(study, tech, phenotype, a_2, feature)
 ]
 
@@ -1277,111 +3001,6 @@ for (ext in formats) {
   )
 }
 
-# studies <- c("BRCA", "THCA", "UCEC")
-# techs   <- c("mrna", "meth")
-
-# plot_list <- list()
-# for (t in techs) {
-#   for (s in studies) {
-    
-#     sub_df   <- density_sig_df[study == s & tech == t]
-#     plot_key <- paste(t, s, sep = "_")
-
-#     # Title
-#     clean_tech <- t
-#     if (t == "mrna") {
-#       clean_tech <- "Expression"
-#     } else if (t == "meth") {
-#       clean_tech <- "Methylation"
-#     }
-#     plot_title <- paste(s, clean_tech, sep = " ")
-    
-#     # Plot
-#     p <- ggplot(
-#       data = sub_df, 
-#       mapping = aes(
-#         x = l1_norm
-#       )
-#     ) +
-#     geom_histogram(
-#       mapping = aes(y = after_stat(count / tapply(count, PANEL, sum)[PANEL])),
-#       fill = "red"
-#     ) +
-#     facet_grid(
-#       rows = vars(a_2), 
-#       cols = vars(vs_newline(phenotype))
-#     ) +
-#     scale_x_continuous(
-#       # limits = c(-1, 1),
-#       # breaks = c(-1, 0, 1),
-#       breaks = scales::pretty_breaks(n = 3)
-#     ) +
-#     scale_y_continuous(
-#       limits = c(0, 1),
-#       breaks = scales::pretty_breaks(n = 3),
-#       labels = scales::label_percent()
-#     ) +
-#     labs(
-#       title = plot_title,
-#       x = "L1 normalized weights", 
-#       y = "Pct. ancestry-specific features"
-#     ) + 
-#     theme_CrossAncestryGenPhen(
-#       legend_key = 1,
-#       show_border = TRUE,
-#       rotate = 45
-#     ) +
-#     theme(
-#       panel.spacing.x = unit(0.15, "lines"),
-#       panel.spacing.y = unit(0.15, "lines")
-#     ) +
-#     theme(
-#       plot.margin = margin(0, 0, 0, 0, unit = "lines")
-#     )
-      
-#     plot_list[[plot_key]] <- p
-#   }
-# }
-
-# # Patchwork
-# ordered_plots <- list()
-# for (t in techs) {
-#   for (s in studies) {
-#     ordered_plots <- c(
-#       ordered_plots, 
-#       list(plot_list[[paste(t, s, sep = "_")]])
-#     )
-#   }
-# }
-
-# r1.14_panel_E <- wrap_plots(ordered_plots, ncol = length(studies)) +
-#  plot_annotation(
-#     tag_levels = "a"
-#   ) &
-#   theme(
-#     plot.title = element_text(margin = margin(b = -3)),
-#     plot.tag = element_text(size = 10, face = "bold")
-#   )
-
-# # Save
-# for (ext in formats) {
-#   ggsaveDK(
-#     plot = r1.14_panel_E,
-#     file = file.path(
-#       fig_dir, 
-#       paste0(
-#         "r1.14_panel_E.", 
-#         ext
-#       )
-#     ),
-#     height = 12,
-#     width = 16,
-#     trimmed = FALSE,
-#     bg = "white",
-#     dpi = 300
-#   )
-# }
-
 #### Panel F (Boxplots of model weights for top 5 ancestry-specific genes) -----
 # Robustness of ancestry-specific model weights (individual genes)
 techs <- c("mrna", "meth")
@@ -1389,24 +3008,24 @@ techs <- c("mrna", "meth")
 tech_plots <- list()
 for (tc in techs) {
   
-  top_genes_dt <- subset_res[
+  top_genes_dt <- limma_res[
     study == "BRCA" & 
     tech == tc &
     phenotype == "Basal vs non-Basal" &
     coef_id == "interaction" &
-    p_adj < alpha
+    p_adj < target_alpha
   ][order(p_adj), .(feature = head(feature, 10)), by = .(a_2)]
   
   unique_feat <- unique(top_genes_dt$feature)
   
-  bg_significance <- subset_res[
+  bg_significance <- limma_res[
     study == "BRCA" & 
     tech == tc &
     phenotype == "Basal vs non-Basal" &
     coef_id == "interaction" &
     feature %in% unique_feat
   , .(
-      is_significant = any(p_adj < alpha)
+      is_significant = any(p_adj < target_alpha)
     ), by = .(a_2, feature)]
   
   bg_significance <- bg_significance[is_significant == TRUE]
@@ -1498,512 +3117,6 @@ for (ext in formats) {
 
 
 ## Reviewer 2 =================================================================
-### R2.11 ---------------------------------------------------------------------
-#### Panel A (Inconclusive prediction tasks & sample nr.) ---------------------
-# Calc. AUC
-pred_AUC <- pred_prob[
-  ,
-  {
-    # Observed AUC
-    AUC_obs <- roc_auc_vec(
-      truth = droplevels(true),
-      estimate = prob,
-      event_level = "second"
-    )
-
-    # Permuted AUCs
-    AUC_perm <- replicate(
-      100,
-      roc_auc_vec(
-        truth = sample(droplevels(true)),
-        estimate = prob,
-        event_level = "second"
-      )
-    )
-
-    rbindlist(list(
-      data.table(type = "Observed", AUC = AUC_obs),
-      data.table(type = "Permuted", AUC = AUC_perm)
-    ))
-  },
-  by = .(iteration, coef_id, coef_type, a_1, a_2, g_1, g_2, study, tech, phenotype)
-][
-  ,
-  .(
-    AUC_mean = mean(AUC),
-    CI_lower = quantile(AUC, 0.025, na.rm = TRUE),
-    CI_upper = quantile(AUC, 0.975, na.rm = TRUE),
-    n_iter   = uniqueN(iteration)
-  ),
-  by = .(type, coef_id, coef_type, a_1, a_2, g_1, g_2, study, tech, phenotype)
-][
-  ,
-  `:=`(
-    ancestry = fifelse(
-      coef_id == "relationship_X", a_1,
-      fifelse(coef_id == "relationship_Y", a_2, NA_character_)
-    )
-  )
-][
-  ancestry == "EUR", ancestry := "subset-EUR"
-][
-  ,
-  `:=`(
-    ancestry = factor(ancestry, levels = c("subset-EUR", setdiff(levels(ancestry), "subset-EUR"))),
-    set = fifelse(ancestry == "subset-EUR", "Validation (EUR)", "Inference (non-EUR)")
-  )
-][
-  ,
-  set := factor(set, levels = c("Inference (non-EUR)", "Validation (EUR)"))
-][
-  ,
-  phenotype_plot := vs_newline(
-    rename_phenotype(phenotype)
-  )
-][
-  ,
-  phenotype_plot := factor(
-    phenotype_plot,
-    levels = c(
-      "Normal vs\nPrimary",
-      "Basal vs\nnon-Basal",
-      "Luminal A vs\nLuminal B"
-    )
-  )
-]
-
-# Sample sizes
-sample_n_table <- fread("results/tcga/analysis/summary_subset_prediction_effect/summary_sample_n.csv")
-sample_n_table[, phenotype := sub("^[a-zA-Z0-9]+_(.*)_EUR_vs_.*$", "\\1", comp)]
-sample_n_table[, phenotype := gsub("non_", "non-", phenotype)]
-sample_n_table[, phenotype := gsub("_", " ", phenotype)]
-
-sample_n_table[, g_col := gsub("_", "-", g_col)]
-sample_n_table[g_col == "LumA", g_col := "Luminal A"]
-sample_n_table[g_col == "LumB", g_col := "Luminal B"]
-
-sample_n_table[, phenotype := vs_newline(rename_phenotype(phenotype))]
-sample_n_table[, phenotype := factor(phenotype, levels = c("Normal vs\nPrimary", "Basal vs\nnon-Basal", "Luminal A vs\nLuminal B"))]
-
-# Plots
-techs <- c("meth", "mrna")
-
-tech_combined_plots <- list()
-for (tc in techs) {
-
-  # Common sample-size axis across technologies
-  sample_n_max <- max(
-    sample_n_table[
-      study == "BRCA" &
-      a_col %in% unique(pred_AUC$a_2),
-      n
-    ],
-    na.rm = TRUE
-  )
-  sample_n_limits <- c(0, sample_n_max * 1.15)
-  
-  # Calculate performance overlaps (obs. versus perm.)
-  perf_overlap <- merge(
-    pred_AUC[study == "BRCA" & tech == tc & type == "Observed", .(a_2, set, phenotype_plot, tech, AUC_mean)],
-    pred_AUC[study == "BRCA" & tech == tc & type == "Permuted", .(a_2, set, phenotype_plot, tech, CI_upper)],
-    by = c("a_2", "set", "phenotype_plot", "tech")
-  )
-  
-  # Combine conditions: Inconclusive if error bar cross OR any group sample size < 5
-  inconclusive_c1 <- perf_overlap[CI_upper >= AUC_mean]
-  inconclusive_c1[, a_2 := factor(a_2, levels = levels(factor(pred_AUC$a_2)))]
-  
-  # Format background table for sample sizes (C.1)
-  inconclusive_c2 <- copy(inconclusive_c1)
-  setnames(inconclusive_c2, old = c("a_2", "phenotype_plot"), new = c("a_col", "phenotype"))
-  inconclusive_c2[, a_col := factor(a_col, levels = levels(factor(sample_n_table$a_col)))]
-
-  # Identify observed bars that are inconclusive
-  inconclusive_bars <- merge(
-    pred_AUC[
-      study == "BRCA" &
-        tech == tc &
-        type == "Observed",
-      .(a_2, set, phenotype_plot, AUC_mean)
-    ],
-    inconclusive_c1[
-      , .(a_2, phenotype_plot)
-    ],
-    by = c("a_2", "phenotype_plot"),
-    allow.cartesian = TRUE
-  )
-
-  inconclusive_bars[, inconclusive_fill := fifelse(
-    set == "Validation (EUR)",
-    "Inconclusive Validation",
-    "Inconclusive Inference"
-  )]
-
-  # Plot model performance
-  p_c1 <- ggplot(
-    mapping = aes(x = a_2)
-  ) +
-  geom_col(
-    data = pred_AUC[
-      study == "BRCA" &
-        tech == tc &
-        type == "Observed"
-    ],
-    mapping = aes(
-      y = AUC_mean,
-      fill = set
-    ),
-    position = position_dodge(width = 0.9),
-    width = 0.9,
-    linewidth = 0
-  ) +
-  geom_col(
-    data = inconclusive_bars,
-    mapping = aes(
-      y = AUC_mean,
-      group = set,
-      fill = inconclusive_fill,
-      alpha = "Inconclusive"
-    ),
-    position = position_dodge(width = 0.9),
-    width = 0.9,
-    color = NA
-  ) +
-  geom_errorbar(
-    data = pred_AUC[
-      study == "BRCA" &
-      tech == tc &
-      type == "Permuted"
-    ],
-    mapping = aes(
-      ymin = CI_lower,
-      ymax = CI_upper,
-      group = set,
-      alpha = "Permuted AUC"
-    ),
-    position = position_dodge(width = 0.9),
-    width = 0.2,
-    linewidth = 0.3
-  ) +
-  geom_point(
-    data = pred_AUC[
-      study == "BRCA" &
-      tech == tc &
-      type == "Permuted"
-    ],
-    mapping = aes(
-      y = AUC_mean,
-      group = set,
-      alpha = "Permuted AUC"
-    ),
-    position = position_dodge(width = 0.9),
-    shape = 18,
-    size = 0.8
-  ) +
-  scale_fill_manual(
-    name = "Performance",
-    values = c(
-      "Inference (non-EUR)" = "orange",
-      "Validation (EUR)" = "#0072B2",
-      "Inconclusive Validation" = "grey65",
-      "Inconclusive Inference" = "grey85"
-    ),
-    breaks = c(
-      "Validation (EUR)",
-      "Inference (non-EUR)"
-    ),
-    labels = c(
-      "Validation (EUR)",
-      "Inference (non-EUR)"
-    ),
-    guide = guide_legend(order = 1)
-  ) +
-  scale_alpha_manual(
-    name = NULL,
-    values = c(
-      "Permuted AUC" = 1,
-      "Inconclusive" = 1
-    ),
-    breaks = c(
-      "Permuted AUC",
-      "Inconclusive"
-    ),
-    guide = guide_legend(
-      order = 2,
-      override.aes = list(
-        shape = c(18, 22),
-        fill = c("black", "grey85"),
-        color = c("black", "grey85"),
-        alpha = 1
-      )
-    )
-  ) +
-  scale_y_continuous(
-    breaks = scales::pretty_breaks(n = 4),
-    expand = expansion(mult = c(0.1, 0.1))
-  ) +
-  facet_grid(
-    rows = vars(phenotype_plot),
-    scales = "free",
-    space = "free",
-    labeller = labeller(
-      phenotype = vs_newline,
-      tech = c(
-        meth = "Methylation",
-        mrna = "Expression"
-      )
-    )
-  ) +
-  coord_flip() +
-  labs(
-    x = "Ancestry",
-    y = "Mean ROC AUC"
-  ) +
-  theme_CrossAncestryGenPhen(
-    # rotate = 45,
-    legend_key = 1,
-    show_borders = TRUE,
-    show_facets = TRUE
-  ) +
-  theme(
-    panel.spacing.x = unit(0.15, "lines"),
-    panel.spacing.y = unit(0.15, "lines"),
-    legend.margin = margin(0, 0, 0, 0),
-    strip.text.y = element_blank()
-  )
-  
-  # Plot sample sizes
-  p_c2 <- ggplot(
-    data = sample_n_table[
-      study == "BRCA" &
-      tech == tc &
-      a_col %in% unique(pred_AUC$a_2)
-    ],
-    mapping = aes(
-      x = a_col, 
-      y = n, 
-      fill = g_col
-    )
-  ) +
-  # geom_rect(
-  #   data = inconclusive_c2,
-  #   mapping = aes(
-  #     xmin = as.numeric(a_col) - 0.47, 
-  #     xmax = as.numeric(a_col) + 0.47,
-  #     ymin = -Inf, ymax = Inf
-  #   ),
-  #   fill = "grey90",
-  #   linewidth = 0.1,
-  #   inherit.aes = FALSE
-  # ) +
-  geom_col(
-    linewidth = 0, 
-    position = position_dodge(width = 0.9)
-  ) +
-  geom_text(
-    aes(label = n), 
-    position = position_dodge(width = 0.9),
-    hjust = -0.1,
-    size = 1.5, 
-    inherit.aes = TRUE
-  ) +
-  scale_fill_brewer(
-    name = "Cancer type", 
-    palette = "Set2",
-    breaks = c(
-      "Normal", 
-      "Primary", 
-      "Basal", 
-      "non-Basal", 
-      "Luminal A", 
-      "Luminal B"
-    )
-  ) + 
-  facet_grid(
-    rows = vars(phenotype), 
-    scales = "free", 
-    space = "free"
-  ) +
-  coord_flip(clip = "off") +
-  scale_y_continuous(
-    limits = sample_n_limits,
-    breaks = c(0, 50, 125),
-    expand = expansion(mult = c(0.05, 0.15))
-  ) +
-  labs(
-    x = "Ancestry", 
-    y = "Nr. samples"
-  ) +
-  theme_CrossAncestryGenPhen(
-    # rotate = 45,
-    legend_key = 1, 
-    show_borders = FALSE
-  ) +
-  theme(
-    panel.spacing.x = unit(0.15, "lines"), 
-    panel.spacing.y = unit(0.15, "lines"),
-    legend.margin = margin(0, 0, 0, 0), 
-    plot.margin = margin(0, 0, 0, 0),
-    axis.title.y = element_blank(), 
-    axis.text.y = element_blank()
-  )
-
-  # Tech title
-  p_c3 <- ggplot(
-    data = sample_n_table[
-      study == "BRCA" &
-      tech == tc &
-      a_col %in% unique(pred_AUC$a_2)
-    ],
-    mapping = aes(
-      x = a_col, 
-      y = n, 
-      fill = g_col
-    )
-  ) +
-  facet_grid(
-    rows = vars(tech), 
-    scales = "free", 
-    space = "free",
-    labeller = labeller(
-      tech  = c(
-        meth = "Methylation", 
-        mrna = "Expression"
-      )
-    )
-  ) +
-  coord_flip(clip = "off") +
-  labs(
-    title = NULL,
-    x = NULL,
-    y = NULL
-  ) +
-  theme_CrossAncestryGenPhen(
-    show_borders = FALSE,
-    show_axis = FALSE
-  ) +
-  theme(
-    plot.margin = margin(0, 0, 0, 0),
-    strip.text.y = element_text(margin = margin(0, 0, 0, 0)),
-    axis.text.x = element_blank(),
-    axis.text.y = element_blank()
-  )
-  
-  # Append
-  tech_combined_plots[[tc]] <- wrap_plots(p_c1, p_c2, p_c3, ncol = 3, widths = c(0.9, 0.75, 0.0001))
-}
-
-r2.11 <- wrap_plots(
-  tech_combined_plots[[1]] &
-  theme(
-    plot.margin = margin(l = 0.1, t = 0, b = 0.1, r = 0.1, unit = "lines"),
-    axis.title.x = element_blank(),
-    axis.text.x = element_blank()
-  ),
-  tech_combined_plots[[2]] & 
-  theme(
-    plot.margin = margin(l = 0.1, t = 0.1, b = 0, r = 0.1, unit = "lines")
-  ),
-  ncol = 1
-) +
-plot_layout(
-  guides = "collect"
-)
-
-# Save
-for (ext in formats) {
-  ggsaveDK(
-    plot = r2.11,
-    file = file.path(
-      fig_dir, 
-      paste0("r2.11.", ext)
-    ),
-    height = 9.5,
-    width = 8.2,
-    trimmed = FALSE,
-    bg = "transparent"
-  )
-}
-
-### R2.12 ---------------------------------------------------------------------
-#### Panel A (Ambiguous legends 4B) -------------------------------------------
-r2.12 <- ggplot(
-  data = pred_loss[, `:=`(
-        T_obs = log2(frac_mean),
-        p_adj = p.adjust(p_value, method = "BH")
-      )
-  ],
-  mapping = aes(
-    x = a_2,
-    y = rename_phenotype(phenotype),
-    color = T_obs,
-    size = -log10(p_adj)
-  )
-) +
-geom_point(
-  #shape = 21,
-  # color = "black",
-  # stroke = 0.1
-) +
-scale_color_gradient2(
-  name = expression(log[2] ~ (frac("non-EUR"["log loss"], "EUR"["log loss"]))),
-  low  = "#4575b4",
-  mid  = "white",
-  high = "#d73027",
-  midpoint = 0
-) +
-scale_size_continuous(
-  name = expression(-log[10] * ( "adj. p-value" )),
-  range = c(0.5, 2),
-  breaks = scales::pretty_breaks(n = 3)
-) +
-facet_grid(
-  cols = vars(tech),
-  rows = vars(study),
-  scales = "free_y",
-  space  = "free_y",
-  labeller = labeller(
-    tech  = c(
-      meth = "Methylation", 
-      mrna = "Expression"
-    )
-  )
-) +
-labs(
-  x = "Ancestry",
-  y = "Cancer comparison"
-) +
-theme_CrossAncestryGenPhen(
-  legend_key = 1,
-  rotate = 45,
-  show_borders = TRUE,
-  show_grid = FALSE
-) +
-theme(
-  panel.spacing.x = unit(0.15, "lines"),
-  panel.spacing.y = unit(0.15, "lines"),
-  legend.margin = margin(0, 0, 0, 0)
-)
-
-# Save
-for (ext in formats) {
-  ggsaveDK(
-    plot = r2.12,
-    file = file.path(
-      fig_dir, 
-      paste0(
-        "r2.12.", 
-        ext
-      )
-    ),
-    height = 5,
-    width = 9,
-    trimmed = FALSE,
-    bg = "transparent",
-    dpi = 300
-  )
-}
-
 ### R2.13 ---------------------------------------------------------------------
 #### Panel A (Histogram of log2FC loss ratio) ---------------------------------
 r2.13.1 <- ggplot(
@@ -2281,7 +3394,7 @@ frac_loss <- pred_loss[
     frac_mean
   )
 ][
-  auc_stats[
+  pred_auc[
     ,
     .(
       study,

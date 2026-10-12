@@ -1,178 +1,82 @@
 ## max. code width ============================================================
+
+
 ## Libraries ==================================================================
-suppressPackageStartupMessages(
-  {
-    library(CrossAncestryGenPhen)
-    library(ComplexHeatmap)
-    library(data.table)
-    library(ggnewscale)
-    library(patchwork)
-    library(yardstick)
-    library(circlize)
-    library(ggplot2)
-    library(msigdbr)
-    library(fgsea)
-    library(ggh4x)
-  }
-)
+suppressPackageStartupMessages({
+  library(CrossAncestryGenPhen)
+  library(ComplexHeatmap)
+  library(data.table)
+  library(ggnewscale)
+  library(openxlsx)
+  library(patchwork)
+  library(yardstick)
+  library(circlize)
+  library(ggplot2)
+  library(msigdbr)
+  library(fgsea)
+  library(ggh4x)
+})
 
-## Script fun. ================================================================
+## utils.R ====================================================================
+source("R/utils.R")
 
-# Make shorter phenotype
-vs_newline <- function(x) {
-  gsub("\\s*vs\\s*", " vs\n", x)
-}
+## Parameters ===================================================================
+target_alpha <- 0.1
 
-rename_phenotype <- function(x) {
-  x <- gsub("\\bLumA\\b", "Luminal A", x)
-  x <- gsub("\\bLumB\\b", "Luminal B", x)
-  x
-}
+formats <- c("svg", "png")
 
-# Save cor
-cor_safe <- function(x, y, n) {
-  if (
-    n >= 3 &&
-    sd(x) > 0 &&
-    sd(y) > 0
-  ) {
-    cor(x, y, method = "pearson")
-  } else {
-    NA_real_
-  }
-}
+# Data.table threads
+setDTthreads(threads = 0)
 
-# Save heatmap
-save_heatmapsDK <- function(
-  plot,
-  file,
-  height,
-  width,
-  bg = "transparent",
-  dpi = NA,
-  unit = "cm",
-  ncol = 2
-) {
-  
-  # helper: convert to inches if needed
-  to_in <- function(x, unit) {
-    if (unit == "cm") return(x / 2.54)
-    if (unit == "mm") return(x / 25.4)
-    if (unit == "in") return(x)
-    stop("Unsupported unit: ", unit)
-  }
-  
-  width_in  <- to_in(width, unit)
-  height_in <- to_in(height, unit)
-  
-  # infer format
-  ext <- tools::file_ext(file)
-  
-  # open device
-  if (ext == "svg") {
-    svg(file, width = width_in, height = height_in)
-    
-  } else if (ext == "png") {
-    png(
-      file,
-      width = width_in,
-      height = height_in,
-      units = "in",
-      res = ifelse(is.na(dpi), 300, dpi),
-      bg = bg
-    )
-    
-  } else {
-    stop(paste("Unsupported format:", ext))
-  }
-  
-  heatmaps <- plot
-  n <- length(heatmaps)
-  nrow <- ceiling(n / ncol)
-  
-  pushViewport(viewport(layout = grid.layout(nrow, ncol)))
-  
-  for (i in seq_along(heatmaps)) {
-    row <- ceiling(i / ncol)
-    col <- i %% ncol
-    if (col == 0) col <- ncol
-    
-    pushViewport(
-      viewport(
-        layout.pos.row = row,
-        layout.pos.col = col
-      )
-    )
 
-    draw(
-      heatmaps[[i]], 
-      merge_legends = FALSE,              
-      legend_grouping = "original",
-        
-      heatmap_legend_side = "right",       
-      annotation_legend_side = "bottom", 
-        
-      newpage = FALSE
-    )
 
-    grid::grid.text(
-      letters[i],
-      x = unit(2, "mm"),
-      y = unit(1, "npc") - unit(2, "mm"),
-      just = c("left", "top"),
-      gp = gpar(fontsize = 10, fontface = "bold")
-    )
-    upViewport()
-  }
-  
-  dev.off()
-}
+## Paper ======================================================================
+message("\nCreating paper figures...")
+### paper directories ---------------------------------------------------------
+fig_dir <- file.path("results", "tcga", "figures", "subset_logistic_regression_prediction")
+tab_dir <- file.path("results", "tcga", "tables", "subset_logistic_regression_prediction")
 
-## Colors =====================================================================
+# Figures
+fig_dir_main <- file.path(fig_dir, "main")
+fig_dir_supp <- file.path(fig_dir, "supp")
+if (!dir.exists(fig_dir_main)) dir.create(fig_dir_main, recursive = TRUE)
+if (!dir.exists(fig_dir_supp)) dir.create(fig_dir_supp, recursive = TRUE)
 
-ancestry_cols <- c(
-  "EUR"   = "#0072B2",
-  "AFR"   = "#D55E00",
-  "EAS"   = "#56B4E9",
-  "AMR"   = "#E69F00",
-  "SAS"   = "#009E73",
-  "ADMIX" = "#999999"
-)
+# Tables
+tab_dir_supp <- file.path(tab_dir, "supp")
+tab_dir_fig  <- file.path(tab_dir, "fig")
+if (!dir.exists(tab_dir_fig)) dir.create(tab_dir_fig, recursive = TRUE)
+if (!dir.exists(tab_dir_supp)) dir.create(tab_dir_supp, recursive = TRUE)
 
-phenotype_cols <- c(
-  "Basal vs non-Basal"      = "#c67aa3", 
-  "Luminal A vs Luminal B"  = "darkred", 
-  "Normal vs Primary"       = "#A65628", 
-  "Serous vs Endometrioid"  = "#414141", 
-  "Classical vs Follicular" = "#1B9E77", 
-  "M0 vs MX"                = "#d9c002"
-)
 
-## Directories ================================================================
-
-# Result directories (per cance study)
+## Results ====================================================================
+### res directories           -------------------------------------------------
 res_dirs <- list(
   BRCA = file.path("results", "tcga", "analysis", "TCGA_BRCA"),
   UCEC = file.path("results", "tcga", "analysis", "TCGA_UCEC"),
   THCA = file.path("results", "tcga", "analysis", "TCGA_THCA")
 )
+sum_dir <- file.path("results", "tcga", "analysis", "summary_subset_logistic_regression_prediction")
+stopifnot(length(unique(dirname(c(unlist(res_dirs), sum_dir)))) == 1)
 
-# Figures
-fig_dir <- file.path("results", "tcga", "figures", "subset_prediction_effect")
-if (!dir.exists(fig_dir)) dir.create(fig_dir, recursive = TRUE)
+cfg_dirs <- list(
+  BRCA = file.path("configs", "tcga", "TCGA_BRCA"),
+  UCEC = file.path("configs", "tcga", "TCGA_UCEC"),
+  THCA = file.path("configs", "tcga", "TCGA_THCA")
+)
 
-# Tables
-tab_dir <- file.path("results", "tcga", "tables", "subset_prediction_effect")
-if (!dir.exists(tab_dir)) dir.create(tab_dir, recursive = TRUE)
+### prediction loss fraction  -------------------------------------------------
+if (!file.exists(file = file.path(sum_dir, "summary_pred_loss.rds"))) {
 
-## Results ====================================================================
+  message("Loading 'pred_loss' from individual results.")
+  pred_loss <- rbindlist(lapply(names(res_dirs), function(study) {
 
-# Loss
-pred_loss <- rbindlist(lapply(names(res_dirs), function(study) {
-
-    fp    <- file.path(res_dirs[[study]], "subset_prediction_effect")
+    fp    <- file.path(res_dirs[[study]], "subset_logistic_regression_prediction")
     files <- list.files(fp, "dge_res\\.rds$", recursive = TRUE, full.names = TRUE)
     techs <- sub("_.*$", "", basename(dirname(files)))
+
+    cfg   <- list.files(cfg_dirs[[study]])
+    message(sprintf("%s found %d/%d files.", study, length(files), length(cfg)))
 
     # List of subset stats + tech
     dts <- Map(function(f,t) {
@@ -194,7 +98,7 @@ pred_loss <- rbindlist(lapply(names(res_dirs), function(study) {
       w[, frac := relationship_Y / relationship_X]
 
       # Add p-values
-      B <- nrow(w)
+      B <- nrow(w)                                    # nr. of EUR-subsets
       p_left  <- (1 + sum(w$frac <= 1)) / (B + 1)     # tests frac > 1
       p_right <- (1 + sum(w$frac >= 1)) / (B + 1)     # tests frac < 1
       p_two_sided <- min(1, 2 * min(p_left, p_right)) # symmetric test
@@ -209,80 +113,193 @@ pred_loss <- rbindlist(lapply(names(res_dirs), function(study) {
       cbind(meta, sm)
     })
 
-  # Add phenotype and study
-  out <- rbindlist(fr)
-  out[, phenotype := gsub("_", "-", paste(g_1, "vs", g_2))]
-  out[, study := study] 
-  out
-}), use.names = TRUE, fill = TRUE)
+    # Add phenotype and study
+    out <- rbindlist(fr)
+    out[, phenotype := gsub("_", "-", paste(g_1, "vs", g_2))]
+    out[, study := study] 
+    out
+  }), use.names = TRUE, fill = TRUE)
 
-# Probabilities
-pred_prob <- rbindlist(lapply(names(res_dirs), function(study) {
-    ## Files 
-    fp    <- file.path(res_dirs[[study]], "subset_prediction_effect")
+  # Save
+  saveRDS(
+    object = pred_loss,
+    file = file.path(
+      sum_dir,
+      "summary_pred_loss.rds"
+    )
+  )
+
+} else {
+  message("Loading 'pred_loss' from: ", sum_dir)
+  pred_loss <- readRDS(file = file.path(sum_dir, "summary_pred_loss.rds"))
+}
+
+### prediction probabilities  -------------------------------------------------
+if (!file.exists(file = file.path(sum_dir, "summary_pred_prob.rds"))) {
+
+  message("Loading 'pred_prob' from individual results.")
+  pred_prob <- rbindlist(lapply(names(res_dirs), function(study) {
+      ## Files 
+      fp    <- file.path(res_dirs[[study]], "subset_logistic_regression_prediction")
+      files <- list.files(fp, "dge_res\\.rds$", recursive = TRUE, full.names = TRUE)
+      techs <- sub("_.*$", "", basename(dirname(files)))
+
+      cfg   <- list.files(cfg_dirs[[study]])
+      message(sprintf("%s found %d/%d files.", study, length(files), length(cfg)))
+
+      # List of subset stats + tech
+      dts <- Map(function(f,t) {
+        dt <- as.data.table(readRDS(f)$subsets_stats)
+        dt[, tech := t]
+      }, files, techs)
+
+      # Output
+      out <- rbindlist(dts)
+      out[, phenotype := gsub("_", "-", paste(g_1, "vs", g_2))]
+      out[, study := study] 
+      out
+  }), use.names = TRUE, fill = TRUE)
+
+  # Save
+  saveRDS(
+    object = pred_prob,
+    file = file.path(
+      sum_dir,
+      "summary_pred_prob.rds"
+    )
+  )
+
+} else {
+  message("Loading 'pred_prob' from: ", sum_dir)
+  pred_prob <- readRDS(file = file.path(sum_dir, "summary_pred_prob.rds"))
+}
+
+### prediction features       -------------------------------------------------
+if (!file.exists(file = file.path(sum_dir, "summary_pred_feat.rds"))) {
+
+  message("Loading 'pred_feat' from individual results.")
+  pred_feat <- rbindlist(lapply(names(res_dirs), function(study) {
+
+    fp    <- file.path(res_dirs[[study]], "subset_logistic_regression_prediction")
     files <- list.files(fp, "dge_res\\.rds$", recursive = TRUE, full.names = TRUE)
     techs <- sub("_.*$", "", basename(dirname(files)))
 
+    cfg   <- list.files(cfg_dirs[[study]])
+    message(sprintf("%s found %d/%d files.", study, length(files), length(cfg)))
+
     # List of subset stats + tech
     dts <- Map(function(f,t) {
-      dt <- as.data.table(readRDS(f)$subsets_stats)
+      dt <- as.data.table(readRDS(f)$feature_stats)
       dt[, tech := t]
+      dt[, l1_norm := estimate / sum(abs(estimate)), by = .(iteration)]
+      dt
     }, files, techs)
 
-    # Output
+    # Add phenotype and study
     out <- rbindlist(dts)
     out[, phenotype := gsub("_", "-", paste(g_1, "vs", g_2))]
     out[, study := study] 
     out
-}), use.names = TRUE, fill = TRUE)
+  }), use.names = TRUE, fill = TRUE)
 
-# Feature importance
-pred_feat <- rbindlist(lapply(names(res_dirs), function(study) {
+  # Save
+  saveRDS(
+    object = pred_feat,
+    file = file.path(
+      sum_dir,
+      "summary_pred_feat.rds"
+    )
+  )
 
-  fp    <- file.path(res_dirs[[study]], "subset_prediction_effect")
-  files <- list.files(fp, "dge_res\\.rds$", recursive = TRUE, full.names = TRUE)
-  techs <- sub("_.*$", "", basename(dirname(files)))
+} else {
+  message("Loading 'pred_feat' from: ", sum_dir)
+  pred_feat <- readRDS(file = file.path(sum_dir, "summary_pred_feat.rds"))
+}
 
-  # List of subset stats + tech
-  dts <- Map(function(f,t) {
-    dt <- as.data.table(readRDS(f)$feature_stats)
-    dt[, tech := t]
-  }, files, techs)
-  
-  # Add phenotype and study
-  out <- rbindlist(dts)
-  out[, phenotype := gsub("_", "-", paste(g_1, "vs", g_2))]
-  out[, study := study] 
-  out
-}), use.names = TRUE, fill = TRUE)
+### ancestry-specific effects -------------------------------------------------
+if (!file.exists(file = file.path(sum_dir, "summary_limma_res.rds"))) {
 
-# Interaction effect
-subset_res <- rbindlist(lapply(names(res_dirs), function(study) {
-  file_path <- file.path(res_dirs[[study]], "subset_interaction_effect")
-  dge_files <- list.files(file_path, pattern = "dge_res\\.rds$", recursive = TRUE, full.names = TRUE)
-  # Load all files
-  all_files <- lapply(dge_files, readRDS)
-  dt <- rbindlist(lapply(all_files, \(x) x$summary_stats), use.names = TRUE, fill = TRUE)
-  # Set phenotype
-  dt[, phenotype := fcase(
-    coef_id == "baseline_1", paste0(g_1),
-    coef_id == "baseline_2", paste0(g_2),
-    coef_id == "relationship_1", paste(g_1, "vs", g_2),
-    coef_id == "relationship_2", paste(g_1, "vs", g_2),
-    coef_id == "interaction", paste(g_1, "vs", g_2)
-  )]
-  dt[, phenotype := gsub("_", "-", phenotype)]
-  dt
-}), fill = TRUE)
+  message("Loading 'limma_res' from individual results.")
+  limma_res <- rbindlist(lapply(names(res_dirs), function(study) {
+    file_path <- file.path(res_dirs[[study]], "subset_limma_interaction_effect")
+    dge_files <- list.files(file_path, pattern = "dge_res\\.rds$", recursive = TRUE, full.names = TRUE)
 
-## Main 4 =====================================================================
+    cfg <- list.files(cfg_dirs[[study]])
+    message(sprintf("%s found %d/%d files.", study, length(dge_files), length(cfg)))
 
-alpha <- 0.1
-formats <- c("svg", "png")
+    # Load all files
+    all_files <- lapply(dge_files, readRDS)
+    dt <- rbindlist(lapply(all_files, \(x) x$summary_stats), use.names = TRUE, fill = TRUE)
 
-### Panel B -------------------------------------------------------------------
+    # Set phenotype
+    dt[, phenotype := fcase(
+      coef_id == "baseline_1", paste0(g_1),
+      coef_id == "baseline_2", paste0(g_2),
+      coef_id == "relationship_1", paste(g_1, "vs", g_2),
+      coef_id == "relationship_2", paste(g_1, "vs", g_2),
+      coef_id == "interaction", paste(g_1, "vs", g_2)
+    )]
+    dt[, phenotype := gsub("_", "-", phenotype)]
+    dt
+  }), fill = TRUE)
 
-# Plot
+  # Save
+  saveRDS(
+    object = limma_res,
+    file = file.path(
+      sum_dir,
+      "summary_limma_res.rds"
+    )
+  )
+
+} else {
+  message("Loading 'limma_res' from: ", sum_dir)
+  limma_res <- readRDS(file = file.path(sum_dir, "summary_limma_res.rds"))
+}
+
+### prediction roc auc        -------------------------------------------------
+if (!file.exists(file = file.path(sum_dir, "summary_pred_auc.rds"))) {
+
+  message("Preparing 'pred_auc' from individual results.")
+  pred_auc <- rbindlist(lapply(names(res_dirs), function(study) {
+
+    fp    <- file.path(res_dirs[[study]], "subset_logistic_regression_prediction")
+    files <- list.files(fp, "dge_res\\.rds$", recursive = TRUE, full.names = TRUE)
+    techs <- sub("_.*$", "", basename(dirname(files)))
+
+    cfg   <- list.files(cfg_dirs[[study]])
+    message(sprintf("%s found %d/%d files.", study, length(files), length(cfg)))
+
+    # List of subset stats + tech
+    dts <- Map(function(f,t) {
+      dt <- as.data.table(readRDS(f)$summary_stats)
+      dt[, tech := t]
+    }, files, techs)
+
+    # Add phenotype and study
+    out <- rbindlist(dts)
+    out[, phenotype := gsub("_", "-", paste(g_1, "vs", g_2))]
+    out[, study := study] 
+    out
+  }), use.names = TRUE, fill = TRUE)
+
+  # Save
+  saveRDS(
+    object = pred_auc,
+    file = file.path(
+      sum_dir,
+      "summary_pred_auc.rds"
+    )
+  )
+
+} else {
+  message("Loading 'pred_auc' from: ", sum_dir)
+  pred_auc <- readRDS(file = file.path(sum_dir, "summary_pred_auc.rds"))
+}
+
+
+## Main Figure 4 ==============================================================
+### panel B -------------------------------------------------------------------
 main4_panel_B <- ggplot(
   data = pred_loss[, `:=`(
         T_obs = log2(frac_mean),
@@ -296,11 +313,7 @@ main4_panel_B <- ggplot(
     size = -log10(p_adj)
   )
 ) +
-geom_point(
-  #shape = 21,
-  # color = "black",
-  # stroke = 0.1
-) +
+geom_point() +
 scale_color_gradient2(
   name = "Log2FC of loss\n(non-EUR / EUR)  ",
   low  = "#4575b4",
@@ -319,7 +332,10 @@ facet_grid(
   scales = "free_y",
   space  = "free_y",
   labeller = labeller(
-    tech  = c(meth = "Methylation", mrna = "Expression")
+    tech  = c(
+      meth = "Methylation", 
+      mrna = "Expression"
+    )
   )
 ) +
 labs(
@@ -339,22 +355,30 @@ theme(
 )
 
 # Save
-ggsaveDK(
-  plot = main4_panel_B,
+for (ext in formats){
+  ggsaveDK(
+    plot = main4_panel_B,
+    file = file.path(
+      fig_dir_main, 
+      paste0("main4_panel_B.", ext)
+    ),
+    height = 5,
+    width = 8,
+    trimmed = FALSE,
+    bg = "transparent"
+  )
+}
+
+saveRDS(
+  object = main4_panel_B,
   file = file.path(
-    fig_dir, 
-    "main4_panel_B.svg"
-  ),
-  height = 5,
-  width = 8,
-  trimmed = FALSE,
-  bg = "transparent"
+    fig_dir_main, 
+    "main4_panel_B.rds"
+  )
 )
 
-### Panel C -------------------------------------------------------------------
-
-# Calc. AUC
-pred_AUC <- pred_prob[
+### panel C -------------------------------------------------------------------
+perm_auc <- pred_prob[
   ,
   {
     # Observed AUC
@@ -408,9 +432,7 @@ pred_AUC <- pred_prob[
 ][
   ,
   set := factor(set, levels = c("Validation", "Inference"))
-]
-
-pred_AUC[
+][
   ,
   phenotype_plot := vs_newline(
     rename_phenotype(phenotype)
@@ -434,7 +456,7 @@ main4_panel_C <- ggplot(
   )
 ) +
 geom_col(
-  data = pred_AUC[
+  data = perm_auc[
     study == "BRCA" &
     type == "Observed"
   ],
@@ -448,7 +470,7 @@ geom_col(
   width = 0.9
 ) +
 geom_errorbar(
-  data = pred_AUC[
+  data = perm_auc[
     study == "BRCA" &
     type == "Permuted"
   ],
@@ -464,7 +486,7 @@ geom_errorbar(
   linewidth = 0.3
 ) +
 geom_point(
-  data = pred_AUC[
+  data = perm_auc[
     study == "BRCA" &
     type == "Permuted"
   ],
@@ -523,21 +545,29 @@ theme(
 )
 
 # Save
-ggsaveDK(
-  plot = main4_panel_C,
+for (ext in formats){
+  ggsaveDK(
+    plot = main4_panel_C,
+    file = file.path(
+      fig_dir_main, 
+      paste0("main4_panel_C.", ext)
+    ),
+    height = 6,
+    width = 8,
+    trimmed = FALSE,
+    bg = "transparent"
+  )
+}
+
+saveRDS(
+  object = main4_panel_C,
   file = file.path(
-    fig_dir, 
-    "main4_panel_C.svg"
-  ),
-  height = 6,
-  width = 8,
-  trimmed = FALSE,
-  bg = "transparent"
+    fig_dir_main, 
+    "main4_panel_C.rds"
+  )
 )
 
-### Panel D -------------------------------------------------------------------
-
-# Compute overlap
+### panel D -------------------------------------------------------------------
 overlap <- pred_feat[
   , .(mean_estimate = mean(estimate, na.rm = TRUE)),
   by = .(
@@ -545,15 +575,15 @@ overlap <- pred_feat[
     a_1, a_2, study, tech, phenotype, feature
   )
 ][
-  subset_res[coef_id == "interaction"],
+  limma_res[coef_id == "interaction"],
   on = .(study, tech, phenotype, a_2, feature),
   nomatch = 0
 ][
   , .(
-    n_sig     = sum(p_adj < alpha),
+    n_sig     = sum(p_adj < target_alpha),
     n_nonzero = sum(mean_estimate != 0),
-    n_both    = sum((p_adj < alpha) & (mean_estimate != 0)),
-    recall    = sum((p_adj < alpha) & (mean_estimate != 0)) / 
+    n_both    = sum((p_adj < target_alpha) & (mean_estimate != 0)),
+    recall    = sum((p_adj < target_alpha) & (mean_estimate != 0)) / 
                 sum(mean_estimate != 0)
   ),
   by = .(study, tech, phenotype, a_2)
@@ -627,28 +657,37 @@ theme(
 ) 
 
 # Save
-ggsaveDK(
-  plot = main4_panel_D,
+for (ext in formats){
+  ggsaveDK(
+    plot = main4_panel_D,
+    file = file.path(
+      fig_dir_main, 
+      paste0("main4_panel_D.", ext)
+    ),
+    height = 5.5,
+    width = 8,
+    trimmed = FALSE,
+    bg = "transparent"
+  )
+}
+
+saveRDS(
+  object = main4_panel_D,
   file = file.path(
-    fig_dir, 
-    "main4_panel_D.svg"
-  ),
-  height = 5.5,
-  width = 8,
-  trimmed = FALSE,
-  bg = "transparent"
+    fig_dir_main, 
+    "main4_panel_D.rds"
+  )
 )
 
-### Panel E -------------------------------------------------------------------
-
+### panel E -------------------------------------------------------------------
 feat <- unique(
   c(
-    subset_res[
+    limma_res[
       study == "BRCA" & 
       tech == "mrna" &
       phenotype == "Basal vs non-Basal" &
       coef_id == "interaction" &
-      p_adj < alpha
+      p_adj < target_alpha
     ][
       , .(feature = head(feature, 15)), 
       by = a_2
@@ -722,13 +761,6 @@ main4_panel_E <- wrap_plots(
       M <- max(abs(dt$mean_estimate), na.rm = TRUE)
       c(-M, M)
     }
-    # labels = function(x) {
-    #   zero_idx <- x == 0
-    #   exp <- log10(x)
-    #   out <- scales::math_format(10^.x)(exp)
-    #   out[zero_idx] <- "0"
-    #   out
-    # }
   ) +
   labs(
     x = "Ancestry",
@@ -746,7 +778,7 @@ main4_panel_E <- wrap_plots(
     axis.text.y = element_text(size = 4),
   ),
   ggplot(
-    data = subset_res[
+    data = limma_res[
       study == "BRCA" & 
       tech == "mrna" &
       phenotype == "Basal vs non-Basal" &
@@ -817,23 +849,34 @@ main4_panel_E <- wrap_plots(
 )
 
 # Save
-ggsaveDK(
-  plot = main4_panel_E,
+for (ext in formats){
+  ggsaveDK(
+    plot = main4_panel_E,
+    file = file.path(
+      fig_dir_main, 
+      paste0("main4_panel_E.", ext)
+    ),
+    height = 12,
+    width = 10,
+    trimmed = FALSE,
+    bg = "transparent"
+  )
+}
+
+saveRDS(
+  object = main4_panel_E,
   file = file.path(
-    fig_dir, 
-    "main4_panel_E.svg"
-  ),
-  height = 12,
-  width = 10,
-  trimmed = FALSE,
-  bg = "transparent"
+    fig_dir_main, 
+    "main4_panel_E.rds"
+  )
 )
 
-### Supp. 1 -------------------------------------------------------------------
 
-nr_degs <- subset_res[
+## Supplementary Figure 4 =====================================================
+### supp. 1 -------------------------------------------------------------------
+nr_degs <- limma_res[
   coef_id == "interaction",
-  .(nr_degs = uniqueN(feature[p_adj <= alpha])),
+  .(nr_degs = uniqueN(feature[p_adj <= target_alpha])),
   by = .(study, phenotype, tech, a_2)
 ][
   , degs_val := log10(nr_degs + 1)
@@ -842,9 +885,7 @@ nr_degs <- subset_res[
     , .(study, phenotype, tech, a_2, loss_val = T_obs)
   ],
   on = .(study, phenotype, tech, a_2)
-][
-  , alpha := alpha
-][]
+]
 
 # Correlation
 nr_degs_cor <- nr_degs[
@@ -863,14 +904,12 @@ nr_degs_cor <- nr_degs[
   , rbindlist(list(
       unique(.SD[, .(
         tech,
-        alpha,
         cor_type  = "Across",
         cor_value = across_cor,
         n         = across_n
       )]),
       unique(.SD[, .(
         tech,
-        alpha,
         cor_type  = a_2,
         cor_value = ancestry_cor,
         n         = ancestry_n
@@ -888,9 +927,7 @@ nr_degs_cor <- nr_degs[
     cor_group, 
     levels = c("Across", "Ancestry")
   )
-][
-  , alpha := alpha
-][]
+]
 
 # Plot
 main4_supp1 <- wrap_plots(
@@ -1030,16 +1067,21 @@ for (ext in formats) {
   ggsaveDK(
     plot = main4_supp1,
     file = file.path(
-      fig_dir, 
-      paste0(
-        "main4_supp1.", 
-        ext
-      )
+      fig_dir_supp, 
+      paste0("main4_supp1.", ext)
     ),
     height = 7,
     width = 16,
     trimmed = FALSE,
-    bg = "transparent",
-    dpi = 300
+    bg = "transparent"
   )
 }
+
+saveRDS(
+  object = main4_supp1,
+  file = file.path(
+    fig_dir_supp, 
+    "main4_supp1.rds"
+  )
+)
+

@@ -1,10 +1,8 @@
 ## max. code width ============================================================
 ## Libraries ==================================================================
-suppressPackageStartupMessages(
-  {
-    library(CrossAncestryGenPhen)
-  }
-)
+suppressPackageStartupMessages({
+  library(CrossAncestryGenPhen)
+})
 
 ## Configs ====================================================================
 configs <- list.files(
@@ -15,7 +13,8 @@ configs <- list.files(
 )
 
 ## Parameters =================================================================
-seed <- 42
+seed   <- 42
+n_iter <- 20
 
 # Parallel env.
 future::plan(future::multisession, workers = 2)
@@ -36,7 +35,7 @@ for (config_file in configs) {
 
   out_dir <- file.path(
     cfg$out_dir, 
-    "subset_random_forest_prediction", 
+    paste0("subset_random_forest_prediction_nsubsets_", n_iter),
     comp
   )
   
@@ -205,9 +204,11 @@ for (config_file in configs) {
     MY = data$Y$meta,
     g_col = cfg$g_col,
     a_col = cfg$a_col,
+    match = FALSE, # R1.09: Handles imbalances wihin cancer.
     n_folds = 5,
     n_models = 5,
     method = "auc",
+    n_iter = n_iter,
     seed = seed,
     verbose = TRUE
   )
@@ -225,14 +226,15 @@ if (length(all_n_list) > 0) {
   
   all_n   <- do.call(rbind, all_n_list)
 
-  out_dir <- file.path("results/tcga/analysis/summary_subset_random_forest_prediction")
+
+  out_dir <- file.path("results","tcga", "analysis", "summary", paste0("subset_random_forest_prediction_nsubsets_", n_iter))
   if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
   
   write.csv(
     all_n,
     file = file.path(
       out_dir,
-      "summary_sample_n.csv"
+      "sample_n.csv"
     ), 
     row.names = FALSE
   )

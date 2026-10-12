@@ -1,381 +1,24 @@
 ## max. code width ============================================================
+
+
 ## Libraries ==================================================================
-suppressPackageStartupMessages(
-  {
-    library(CrossAncestryGenPhen)
-    library(ComplexHeatmap)
-    library(data.table)
-    library(ggnewscale)
-    library(patchwork)
-    library(openxlsx)
-    library(circlize)
-    library(ggplot2)
-    library(msigdbr)
-    library(fgsea)
-    library(ggh4x)
-  }
-)
+suppressPackageStartupMessages({
+  library(CrossAncestryGenPhen)
+  library(ComplexHeatmap)
+  library(data.table)
+  library(ggnewscale)
+  library(openxlsx)
+  library(patchwork)
+  library(yardstick)
+  library(circlize)
+  library(ggplot2)
+  library(msigdbr)
+  library(fgsea)
+  library(ggh4x)
+})
 
-## Script fun. ================================================================
-
-# Make shorter phenotype
-vs_newline <- function(x) {
-  gsub("\\s*vs\\s*", " vs\n", x)
-}
-
-rename_phenotype <- function(x) {
-  x <- gsub("\\bLumA\\b", "Luminal A", x)
-  x <- gsub("\\bLumB\\b", "Luminal B", x)
-  x
-}
-
-# Interaction effect groups (Fortelny et al. 2024)
-group_effects <- function(x) {
-  
-  sign2 <- function(x) fifelse(x > 0, 1, fifelse(x < 0, -1, 0))
-
-  x <- copy(x)
-
-  x[, `:=`(
-    mut         = abs(T_obs_baseline_1),       # ancestry effect (analog of mutation)
-    stim_EUR    = abs(T_obs_relationship_1),   # EUR cancer effect
-    stim_nonEUR = abs(T_obs_relationship_2),   # non-EUR cancer effect
-    int         = abs(T_obs_interaction),
-
-    # Signs for effect direction
-    s_mut    = sign2(T_obs_baseline_1),
-    s_EUR    = sign2(T_obs_relationship_1),
-    s_nonEUR = sign2(T_obs_relationship_2),
-    s_int    = sign2(T_obs_interaction)
-  )]
-
-  x[, effect_group := fcase(
-
-    # (I) Divergent effect
-    int > mut & int > stim_EUR & int > stim_nonEUR,
-      "Divergent effect",
-
-    # (II) Minor interaction effect
-    int <= mut & int <= stim_EUR & int <= stim_nonEUR,
-      "Minor interaction effect",
-
-    # (III) Ancestry modifies cancer effect (choose EUR or non-EUR stim)
-    # SIGN MATCH → enhances
-    int > mut &
-      (
-        (int <= stim_EUR    & s_int == s_EUR) |
-        (int <= stim_nonEUR & s_int == s_nonEUR)
-      ),
-      "non-EUR enhances\ncancer effect",
-
-    # SIGN DIFFERENT → reverts
-    int > mut &
-      (
-        (int <= stim_EUR    & s_int != s_EUR) |
-        (int <= stim_nonEUR & s_int != s_nonEUR)
-      ),
-      "non-EUR reverts\ncancer effect",
-
-    # (IV) Cancer modifies ancestry effect
-    # SIGN MATCH → enhances
-    (int > stim_EUR | int > stim_nonEUR) &
-      int <= mut &
-      s_int == s_mut,
-      "Cancer enhances\nancestry effect",
-
-    # SIGN DIFFERENT → reverts
-    (int > stim_EUR | int > stim_nonEUR) &
-      int <= mut &
-      s_int != s_mut,
-      "Cancer reverts\nancestry effect",
-
-    default = NA_character_
-  )]
-
-  # Order categories
-  order <- c(
-    "Divergent effect",
-    "non-EUR enhances\ncancer effect",
-    "non-EUR reverts\ncancer effect",
-    "Cancer enhances\nancestry effect",
-    "Cancer reverts\nancestry effect",
-    "Minor interaction effect"
-  )
-
-  x[, effect_group := factor(effect_group, levels = order)]
-
-  ## Cancer dominance
-  x[, cancer_dom :=
-    fifelse(
-      abs(T_obs_relationship_1) > abs(T_obs_relationship_2),
-      "Cancer effect\nEUR > non-EUR",
-      "Cancer effect\nEUR < non-EUR"
-    )
-  ]
-
-  return(x)
-}
-
-summarize_effects <- function(
-  x, 
-  alpha
-) {
-
-  # True tested design (preserve structure)
-  full_design <- unique(
-    x[
-      coef_id == "interaction", 
-      .(study, tech, phenotype, a_2)
-    ]
-  )
-
-  # Filter significant interaction effects
-  x_sig_keys <- x[
-    coef_id == "interaction" & p_adj < alpha,
-    .(study, tech, phenotype, a_1, a_2, g_1, g_2, feature)
-  ]
-
-  # Only use interaction phenotypes
-  cols_x <- setdiff(names(x), "phenotype")
-
-  x_sig <- x[, ..cols_x][
-    x_sig_keys,
-    on = .(study, tech, a_1, a_2, g_1, g_2, feature),
-    nomatch = 0
-  ]
-
-  # If nothing significant → return empty but structured result
-  if (nrow(x_sig) == 0) {
-    return(list(
-      x_sig = data.table(),
-      x_sum = data.table()
-    ))
-  }
-
-  # Reshape + classify
-  exp_formula <- expression(
-    study + tech + phenotype + a_1 + a_2 + g_1 + g_2  + feature  ~ coef_id
-  )
-
-  x_sig <- dcast(
-    x_sig,
-    eval(exp_formula),
-    value.var = c("T_obs", "p_adj")
-  )
-
-  x_sig <- group_effects(x_sig)
-  x_sig[, alpha := alpha]
-
-  # Summarize significant ones
-  x_sum <- x_sig[
-    , .(N = .N),
-    by = .(study, phenotype, tech, a_2, effect_group, cancer_dom)
-  ]
-
-  # Keep only effect groups that actually occur
-  effect_levels <- sort(unique(na.omit(x_sig$effect_group)))
-
-  dominance_levels <- c(
-    "Cancer effect\nEUR > non-EUR",
-    "Cancer effect\nEUR < non-EUR"
-  )
-
-  # Expand ONLY within tested combinations
-  full_grid <- full_design[
-    ,
-    CJ(
-      effect_group = effect_levels,
-      cancer_dom = dominance_levels
-    ),
-    by = .(study, phenotype, tech, a_2)
-  ]
-
-  # Merge summary onto valid tested grid
-  x_sum <- merge(
-    full_grid,
-    x_sum,
-    by = c(
-      "study", "phenotype", "tech", "a_2",
-      "effect_group", "cancer_dom"
-    ),
-    all.x = TRUE
-  )
-
-  # Replace missing counts with 0
-  x_sum[is.na(N), N := 0]
-
-  # Compute percentages
-  x_sum[
-    , pct := if (sum(N) == 0) 0 else N / sum(N) * 100,
-    by = .(study, phenotype, tech, a_2, cancer_dom)
-  ]
-
-  # Restore factor ordering
-  x_sum[, `:=`(
-    effect_group = factor(effect_group, levels = effect_levels),
-    cancer_dom = factor(
-      cancer_dom,
-      levels = dominance_levels
-    ),
-    a_2 = factor(a_2, levels = unique(full_design$a_2)),
-    alpha = alpha
-  )]
-
-  # Return
-  return(
-    list(
-      x_sig = x_sig,
-      x_sum = x_sum
-    )
-  )
-}
-
-# Gene set enrichment
-FGSEA <- function(
-  ranks,
-  metadata,
-  pathways
-) {
-
-  res <- fgsea(
-    pathways = pathways,
-    stats = ranks
-  )
-
-  # If returned nothing
-  if (is.null(res) || nrow(res) == 0) return(NULL)
-
-  # Convert to data.table
-  dt <- as.data.table(res)
-
-  # Add metadata columns
-  dt[, study := metadata$study]
-  dt[, phenotype := metadata$phenotype]
-  dt[, tech := metadata$tech]
-  dt[, a_2 := metadata$a_2]
-
-  # Return
-  return(dt)
-}
-
-# Save cor
-cor_safe <- function(x, y, n) {
-  if (
-    n >= 3 &&
-    sd(x) > 0 &&
-    sd(y) > 0
-  ) {
-    cor(x, y, method = "pearson")
-  } else {
-    NA_real_
-  }
-}
-
-# Save heatmap
-save_heatmapsDK <- function(
-  plot,
-  file,
-  height,
-  width,
-  bg = "transparent",
-  dpi = NA,
-  unit = "cm",
-  ncol = 2
-) {
-  
-  # helper: convert to inches if needed
-  to_in <- function(x, unit) {
-    if (unit == "cm") return(x / 2.54)
-    if (unit == "mm") return(x / 25.4)
-    if (unit == "in") return(x)
-    stop("Unsupported unit: ", unit)
-  }
-  
-  width_in  <- to_in(width, unit)
-  height_in <- to_in(height, unit)
-  
-  # infer format
-  ext <- tools::file_ext(file)
-  
-  # open device
-  if (ext == "svg") {
-    svg(file, width = width_in, height = height_in)
-    
-  } else if (ext == "png") {
-    png(
-      file,
-      width = width_in,
-      height = height_in,
-      units = "in",
-      res = ifelse(is.na(dpi), 300, dpi),
-      bg = bg
-    )
-    
-  } else {
-    stop(paste("Unsupported format:", ext))
-  }
-  
-  heatmaps <- plot
-  n <- length(heatmaps)
-  nrow <- ceiling(n / ncol)
-  
-  pushViewport(viewport(layout = grid.layout(nrow, ncol)))
-  
-  for (i in seq_along(heatmaps)) {
-    row <- ceiling(i / ncol)
-    col <- i %% ncol
-    if (col == 0) col <- ncol
-    
-    pushViewport(
-      viewport(
-        layout.pos.row = row,
-        layout.pos.col = col
-      )
-    )
-
-    draw(heatmaps[[i]], newpage = FALSE)
-
-    grid::grid.text(
-      letters[i],
-      x = unit(2, "mm"),
-      y = unit(1, "npc") - unit(2, "mm"),
-      just = c("left", "top"),
-      gp = gpar(fontsize = 10, fontface = "bold")
-    )
-    upViewport()
-  }
-  
-  dev.off()
-}
-
-## Colors =====================================================================
-
-ancestry_cols <- c(
-  "EUR"   = "#0072B2",
-  "AFR"   = "#D55E00",
-  "EAS"   = "#56B4E9",
-  "AMR"   = "#E69F00",
-  "SAS"   = "#009E73",
-  "ADMIX" = "#999999"
-)
-
-phenotype_cols <- c(
-  "Basal vs non-Basal"      = "#c67aa3", 
-  "Luminal A vs Luminal B"  = "darkred", 
-  "Normal vs Primary"       = "#A65628", 
-  "Serous vs Endometrioid"  = "#414141", 
-  "Classical vs Follicular" = "#1B9E77", 
-  "M0 vs MX"                = "#d9c002"
-)
-
-effect_grp_cols <- c(
-  "Divergent effect"                = "#D62728",  
-  "Minor interaction effect"        = "black", 
-  "non-EUR enhances\ncancer effect" = "#1F77B4",  
-  "non-EUR reverts\ncancer effect"  = "#AEC7E8",  
-  "Cancer enhances\nancestry effect"= "#98DF8A",  
-  "Cancer reverts\nancestry effect" = "#2CA02C"
-)
+## utils.R ====================================================================
+source("R/utils.R")
 
 ## Databases ==================================================================
 
@@ -396,143 +39,103 @@ term2gene[, gs_name := {
 # FGSEA database
 fgsea_pathways <- split(term2gene$gene_symbol, term2gene$gs_name)
 
-## Directories ================================================================
+## Parameters =================================================================
+n_iter       <- 10
+target_alpha <- 0.1
 
-# Result directories (per cance study)
+formats <- c("svg", "png")
+
+# Data.table threads
+setDTthreads(threads = 0)
+
+
+## Paper ======================================================================
+message("\nCreating paper figures...")
+### save directories (paper) --------------------------------------------------
+fig_dir <- file.path("results_major_review", "tcga", "figures", paste0("subset_limma_interaction_effect", "_nsubsets_", n_iter))
+tab_dir <- file.path("results_major_review", "tcga", "tables", paste0("subset_limma_interaction_effect", "_nsubsets_", n_iter))
+
+# Figures
+fig_dir_main <- file.path(fig_dir, "main")
+fig_dir_supp <- file.path(fig_dir, "supp")
+if (!dir.exists(fig_dir_main)) dir.create(fig_dir_main, recursive = TRUE)
+if (!dir.exists(fig_dir_supp)) dir.create(fig_dir_supp, recursive = TRUE)
+
+# Tables
+tab_dir_supp <- file.path(tab_dir, "supp")
+tab_dir_fig  <- file.path(tab_dir, "fig")
+if (!dir.exists(tab_dir_fig)) dir.create(tab_dir_fig, recursive = TRUE)
+if (!dir.exists(tab_dir_supp)) dir.create(tab_dir_supp, recursive = TRUE)
+
+
+## Results ====================================================================
+### res directories           -------------------------------------------------
 res_dirs <- list(
   BRCA = file.path("results", "tcga", "analysis", "TCGA_BRCA"),
   UCEC = file.path("results", "tcga", "analysis", "TCGA_UCEC"),
   THCA = file.path("results", "tcga", "analysis", "TCGA_THCA")
 )
+sum_dir <- file.path("results", "tcga", "analysis", "summary", paste0("subset_limma_interaction_effect", "_nsubsets_", n_iter))
+stopifnot(length(unique(dirname(c(unlist(res_dirs), dirname(sum_dir))))) == 1)
+# Create dir
+if (!dir.exists(sum_dir)) dir.create(sum_dir, recursive = TRUE)
 
-# Figures
-fig_dir <- file.path("results_major_review", "tcga", "figures", "subset_interaction_effect")
-if (!dir.exists(fig_dir)) dir.create(fig_dir, recursive = TRUE)
+cfg_dirs <- list(
+  BRCA = file.path("configs", "tcga", "TCGA_BRCA"),
+  UCEC = file.path("configs", "tcga", "TCGA_UCEC"),
+  THCA = file.path("configs", "tcga", "TCGA_THCA")
+)
 
-# Tables
-tab_dir <- file.path("results_major_review", "tcga", "tables", "subset_interaction_effect")
-if (!dir.exists(tab_dir)) dir.create(tab_dir, recursive = TRUE)
+### ancestry-specific effects -------------------------------------------------
+if (!file.exists(file = file.path(sum_dir, "limma_res.rds"))) {
 
-## Results ====================================================================
+  message("Loading 'limma_res' from individual results.")
+  limma_res <- rbindlist(lapply(names(res_dirs), function(study) {
+    fp    <- file.path(res_dirs[[study]], paste0("subset_limma_interaction_effect","_nsubsets_", n_iter))
+    files <- list.files(fp, pattern = "dge_res\\.rds$", recursive = TRUE, full.names = TRUE)
 
-# Subset interaction results 
-subset_res_original <- rbindlist(lapply(names(res_dirs), function(study) {
-  file_path <- file.path(res_dirs[[study]], "subset_interaction_effect")
-  dge_files <- list.files(file_path, pattern = "dge_res\\.rds$", recursive = TRUE, full.names = TRUE)
-  # Load all files
-  all_files <- lapply(dge_files, readRDS)
-  dt <- rbindlist(lapply(all_files, \(x) x$summary_stats), use.names = TRUE, fill = TRUE)
-  # Set phenotype
-  dt[, phenotype := fcase(
-    coef_id == "baseline_1", paste0(g_1),
-    coef_id == "baseline_2", paste0(g_2),
-    coef_id == "relationship_1", paste(g_1, "vs", g_2),
-    coef_id == "relationship_2", paste(g_1, "vs", g_2),
-    coef_id == "interaction", paste(g_1, "vs", g_2)
-  )]
-  dt[, phenotype := gsub("_", "-", phenotype)]
-  dt[, review := FALSE]
-  dt
-}), fill = TRUE)
+    cfg <- list.files(cfg_dirs[[study]])
+    message(sprintf("%s found %d/%d files at: %s", study, length(files), length(cfg), fp))
 
+    # Load all files
+    all_files <- lapply(files, readRDS)
+    dt <- rbindlist(lapply(all_files, \(x) x$summary_stats), use.names = TRUE, fill = TRUE)
 
-## Main 3 =====================================================================
+    # Set phenotype
+    dt[, phenotype := fcase(
+      coef_id == "baseline_1", paste0(g_1),
+      coef_id == "baseline_2", paste0(g_2),
+      coef_id == "relationship_1", paste(g_1, "vs", g_2),
+      coef_id == "relationship_2", paste(g_1, "vs", g_2),
+      coef_id == "interaction", paste(g_1, "vs", g_2)
+    )]
+    dt[, phenotype := gsub("_", "-", phenotype)]
+    dt
+  }), fill = TRUE)
 
-alpha <- 0.1
-formats <- c("svg", "png")
-
-### Excel sheet ---------------------------------------------------------------
-
-for (tech_name in c("mrna", "meth")) {
-
-  wb <- createWorkbook()
-
-  dt_tech <- subset_res_original[
-    tech == tech_name
-  ]
-
-  dt_tech[, interaction_id := paste(
-    g_1,
-    g_2,
-    a_1,
-    a_2,
-    sep = "__"
-  )]
-
-  groups <- split(
-    dt_tech,
-    dt_tech$interaction_id
+  # Save
+  saveRDS(
+    object = limma_res,
+    file = file.path(
+      sum_dir,
+      "limma_res.rds"
+    )
   )
 
-  for (nm in names(groups)) {
-
-    dt <- groups[[nm]]
-    dt <- dt[p_adj < 0.1]
-
-    sheet_name <- paste(
-      unique(dt$g_1),
-      "vs",
-      unique(dt$g_2),
-      unique(dt$a_2),
-      sep = "_"
-    )
-
-    sheet_name <- gsub("[\\[\\]\\*\\?/\\\\:]", "_", sheet_name)
-    sheet_name <- substr(sheet_name, 1, 31)
-
-    addWorksheet(wb, sheet_name)
-
-    writeData(
-      wb,
-      sheet = sheet_name,
-      x = dt
-    )
-  }
-
-  saveWorkbook(
-    wb,
-    file.path(
-      tab_dir,
-      paste0("significant_genes_", tech_name, ".xlsx")
-    ),
-    overwrite = TRUE
-  )
+} else {
+  message("Loading 'limma_res' from: ", sum_dir)
+  limma_res <- readRDS(file = file.path(sum_dir, "limma_res.rds"))
 }
 
 
-### Panel A -------------------------------------------------------------------
+limma_res_orig <- limma_res
 
-# Calc. number of DEGs
-nr_degs <- subset_res_original[
-  ,
-  .(
-    alpha = alpha,
-    nr_degs = sum(p_adj < alpha)
-  ),
-  by = .(
-    study, phenotype, 
-    tech, coef_id, a_2
-  )
+
+## Main Figure 3 ==============================================================
+### panel A -------------------------------------------------------------------
+nr_degs <- limma_res[, nr_degs := sum(p_adj < target_alpha),
+  by = .(study, phenotype, tech, coef_id, a_2)
 ]
-
-# Save
-write.csv(
-  nr_degs,
-  file = file.path(
-    tab_dir, 
-    "main3_panel_A.csv"
-  ),
-  row.names = FALSE
-)
-
-# Save Excel
-openxlsx::write.xlsx(
-  nr_degs,
-  file = file.path(
-    tab_dir,
-    "main3_panel_A.xlsx"
-  )
-)
 
 # Plot
 main3_panel_A <- ggplot(
@@ -544,7 +147,6 @@ main3_panel_A <- ggplot(
 geom_tile(
   data = nr_degs[
     coef_id %in% "interaction" & 
-    alpha == alpha &
     nr_degs == 0
   ],
   mapping = aes(
@@ -565,7 +167,6 @@ ggnewscale::new_scale_fill() +
 geom_tile(
   data = nr_degs[
     coef_id %in% "interaction" &
-    alpha == alpha &
     nr_degs != 0
   ],
   mapping = aes(
@@ -615,21 +216,29 @@ theme(
 )
 
 # Save
-ggsaveDK(
-  plot = main3_panel_A,
+for (ext in formats){
+  ggsaveDK(
+    plot = main3_panel_A,
+    file = file.path(
+      fig_dir_main, 
+      paste0("main3_panel_A.", ext)
+    ),
+    height = 5,
+    width = 8,
+    trimmed = FALSE,
+    bg = "transparent"
+  )
+}
+
+saveRDS(
+  object = main3_panel_A,
   file = file.path(
-    fig_dir, 
-    "main3_panel_A.svg"
-  ),
-  height = 5,
-  width = 8,
-  trimmed = FALSE,
-  bg = "transparent"
+    fig_dir_main, 
+    "main3_panel_A.rds"
+  )
 )
 
-### Panel B -------------------------------------------------------------------
-
-# Cancer effect bigger in EUR
+### panel B -------------------------------------------------------------------
 effect_grp_EUR <- data.table(
   ancestry = c(
     "EUR", "EUR", "non-EUR", "non-EUR",
@@ -846,32 +455,30 @@ theme(
 )
 
 # Save
-ggsaveDK(
-  plot = main3_panel_B,
+for (ext in formats){
+  ggsaveDK(
+    plot = main3_panel_B,
+    file = file.path(
+      fig_dir_main, 
+      paste0("main3_panel_B.", ext)
+    ),
+    height = 5,
+    width = 9.5,
+    trimmed = FALSE,
+    bg = "transparent"
+  )
+}
+
+saveRDS(
+  object = main3_panel_B,
   file = file.path(
-    fig_dir, 
-    "main3_panel_B.svg"
-  ),
-  height = 5,
-  width = 9.5,
-  trimmed = FALSE,
-  bg = "transparent"
+    fig_dir_main, 
+    "main3_panel_B.rds"
+  )
 )
 
-### Panel C -------------------------------------------------------------------
-
-# Group effects 
-effect_grps_pct <- summarize_effects(subset_res_original, alpha = alpha)
-
-# Save
-write.csv(
-  effect_grps_pct$x_sum,
-  file = file.path(
-    tab_dir, 
-    "main3_panel_C.csv"
-  ),
-  row.names = FALSE
-)
+### panel C -------------------------------------------------------------------
+effect_grps_pct <- summarize_effects(limma_res, alpha = target_alpha)
 
 # Plot
 main3_panel_C <- ggplot(
@@ -932,20 +539,29 @@ theme(
 )
 
 # Save
-ggsaveDK(
-  plot = main3_panel_C,
+for (ext in formats){
+  ggsaveDK(
+    plot = main3_panel_C,
+    file = file.path(
+      fig_dir_main, 
+      paste0("main3_panel_C.", ext)
+    ),
+    height = 6,
+    width = 8,
+    trimmed = FALSE,
+    bg = "transparent"
+  )
+}
+
+saveRDS(
+  object = main3_panel_C,
   file = file.path(
-    fig_dir, 
-    "main3_panel_C.svg"),
-  height = 6,
-  width = 8,
-  trimmed = FALSE,
-  bg = "transparent"
+    fig_dir_main, 
+    "main3_panel_C.rds"
+  )
 )
 
-### Panel D -------------------------------------------------------------------
-
-# Plot
+### panel D -------------------------------------------------------------------
 main3_panel_D <- wrap_plots(
   ggplot(
     data = copy(effect_grps_pct$x_sig)[
@@ -980,17 +596,17 @@ main3_panel_D <- wrap_plots(
     plot.margin = margin(0, 0, 0, 0)
   ),
   ggplot(
-    data = subset_res_original[
+    data = limma_res[
       study == "BRCA" & 
       tech == "mrna" & 
       phenotype == "Basal vs non-Basal" & 
       coef_id %in% c("relationship_1", "relationship_2", "interaction") &
-      feature %in% subset_res_original[
+      feature %in% limma_res[
         study == "BRCA" & 
         tech == "mrna" & 
         phenotype == "Basal vs non-Basal" & 
         coef_id == "interaction" & 
-        p_adj < 0.1,
+        p_adj < target_alpha,
         feature
       ]
     ][, 
@@ -1056,21 +672,29 @@ main3_panel_D <- wrap_plots(
 ) + plot_layout(heights = c(0.05, 1))
 
 # Save
-ggsaveDK(
-  plot = main3_panel_D,
+for (ext in formats){
+  ggsaveDK(
+    plot = main3_panel_D,
+    file = file.path(
+      fig_dir_main, 
+      paste0("main3_panel_D.", ext)
+    ),
+    height = 6,
+    width = 11,
+    trimmed = FALSE,
+    bg = "transparent"
+  )
+}
+
+saveRDS(
+  object = main3_panel_D,
   file = file.path(
-    fig_dir, 
-    "main3_panel_D.svg"
-  ),
-  height = 6,
-  width = 11,
-  trimmed = FALSE,
-  bg = "transparent"
+    fig_dir_main, 
+    "main3_panel_D.rds"
+  )
 )
 
-### Panel E -------------------------------------------------------------------
-
-# BRCA study
+### panel E -------------------------------------------------------------------
 mrna <- readRDS("download/GDCportal/TCGA_BRCA/TCGA_BRCA_omics_layers.rds")[["mrna"]]
 mrna <- filter_sample_type(
   X = mrna$matr, 
@@ -1118,7 +742,7 @@ data_expr <- effect_grps_pct$x_sig[
   feature %in% feats,
   .(study, tech, phenotype, a_2, feature, effect_group)
 ][
-  subset_res_original[
+  limma_res[
     coef_id == "interaction" &
     study == "BRCA" &
     tech == "mrna" &
@@ -1165,7 +789,7 @@ data_expr <- effect_grps_pct$x_sig[
   , `:=`(
     a_2 = factor(a_2, levels = c("EUR", setdiff(unique(a_2), "EUR"))),
     feature = factor(feature, levels = feats),
-    sig = fifelse(p_adj < 0.1, "*", "n.s.")
+    sig = fifelse(p_adj < target_alpha, "*", "n.s.")
   )
 ][, 
   x := as.numeric(a_2)
@@ -1236,7 +860,7 @@ main3_panel_E <- ggplot(
 geom_rect(
   data = unique(
     data_expr[
-      p_adj < 0.1, 
+      p_adj < target_alpha, 
       .(feature, x, effect_group)
     ]
   ),
@@ -1290,23 +914,31 @@ theme(
 )
 
 # Save
-ggsaveDK(
-  plot = main3_panel_E,
+for (ext in formats){
+  ggsaveDK(
+    plot = main3_panel_E,
+    file = file.path(
+      fig_dir_main, 
+      paste0("main3_panel_E.", ext)
+    ),
+    height = 6,
+    width = 11,
+    trimmed = FALSE,
+    bg = "transparent"
+  )
+}
+
+saveRDS(
+  object = main3_panel_E,
   file = file.path(
-    fig_dir, 
-    "main3_panel_E.svg"
-  ),
-  height = 6,
-  width = 11,
-  trimmed = FALSE,
-  bg = "transparent"
+    fig_dir_main, 
+    "main3_panel_E.rds"
+  )
 )
 
-### Panel F -------------------------------------------------------------------
-
-# Fast gene set enrichment analysis
-data_fgsea <- rbindlist(
-  subset_res_original[
+### panel F -------------------------------------------------------------------
+gsea <- rbindlist(
+  limma_res[
     coef_id == "interaction"
   ][
     tech == "meth",
@@ -1345,74 +977,7 @@ data_fgsea <- rbindlist(
 
 # Plot
 main3_panel_F <- ggplot(
-  data = data_fgsea[
-    study == "BRCA" & 
-    phenotype == "Basal vs non-Basal" &
-    padj < 0.05
-  ][
-    order(-abs(NES))
-  ][,
-    head(.SD, 7),
-    by = .(phenotype, tech, a_2)
-  ],
-  mapping = aes(
-    x = NES,
-    y = reorder(pathway, NES),
-    fill = a_2
-  )
-) +
-geom_col(
-  position = position_dodge(
-    width = 0.8
-  ),
-  width = 0.7,
-  color = "black",
-  linewidth = 0.1,
-  na.rm = TRUE
-) +
-scale_fill_manual(
-  values = ancestry_cols
-) +
-facet_grid(
-  rows = vars(tech),
-  scales = "free_y",
-  space = "free",
-  labeller = labeller(
-    tech = c(meth = "Methylation", mrna = "Expression")
-  )
-) +
-labs(
- fill = "Ancestry",
- x = "Normalized\nenrichment score",
- y = "Hallmark pathway"
-) +
-theme_CrossAncestryGenPhen(
-  legend_key = 1,
-  show_border = TRUE,
-  show_grid = FALSE
-) +
-theme(
-  panel.spacing.x = unit(0.15, "lines"),
-  panel.spacing.y = unit(0.15, "lines"),
-  legend.margin = margin(0, 0, 0, 0)
-)
-
-# Save
-ggsaveDK(
-  plot = main3_panel_F,
-  file = file.path(
-    fig_dir, 
-    "main3_panel_F.svg"
-  ),
-  height = 6,
-  width = 7,
-  trimmed = FALSE,
-  bg = "transparent"
-)
-
-# Plot
-main3_panel_F.1 <- ggplot(
-  data = data_fgsea[
+  data = gsea[
     study == "BRCA" & 
     phenotype == "Basal vs non-Basal" &
     padj < 0.05
@@ -1431,7 +996,6 @@ main3_panel_F.1 <- ggplot(
 ) +
 geom_point() +
 scale_size_continuous(
-  #name = "-log10 P.adj",
   name = expression(-log[10] * ( "adj. p-value" )),
   breaks = scales::pretty_breaks(n = 5),
   range = c(0.0, 2)
@@ -1471,29 +1035,39 @@ theme(
 )
 
 # Save
-ggsaveDK(
-  plot = main3_panel_F.1,
+for (ext in formats){
+  ggsaveDK(
+    plot = main3_panel_F,
+    file = file.path(
+      fig_dir_main, 
+      paste0("main3_panel_F.", ext)
+    ),
+    height = 6,
+    width = 7.1,
+    trimmed = FALSE,
+    bg = "transparent"
+  )
+}
+
+saveRDS(
+  object = main3_panel_F,
   file = file.path(
-    fig_dir, 
-    "main3_panel_F.1.svg"
-  ),
-  height = 6,
-  width = 7.1,
-  trimmed = TRUE,
-  bg = "transparent"
+    fig_dir_main, 
+    "main3_panel_F.rds"
+  )
 )
 
-### Supp. 1 -------------------------------------------------------------------
 
-# DEGs per coef
-nr_degs <- subset_res_original[
+## Supplementary Figure 3 =====================================================
+### supp. 1 -------------------------------------------------------------------
+nr_degs <- limma_res[
   coef_type == "interaction",
-  .(i_count = uniqueN(feature[p_adj <= alpha])),
+  .(i_count = uniqueN(feature[p_adj <= target_alpha])),
   by = .(study, tech, a_2, g_1, g_2, phenotype)
 ][
-  subset_res_original[
+  limma_res[
     coef_type == "baseline",
-    .(b_count = uniqueN(feature[p_adj <= alpha])),
+    .(b_count = uniqueN(feature[p_adj <= target_alpha])),
     by = .(study, tech, a_2, g_1, g_2)
   ],
   on = .(study, tech, a_2, g_1, g_2)
@@ -1502,9 +1076,7 @@ nr_degs <- subset_res_original[
     lb = log10(b_count + 1),
     li = log10(i_count + 1)
   )
-][
-  , alpha := alpha
-][]
+]
 
 # Correlation
 nr_degs_cor <- nr_degs[
@@ -1523,14 +1095,12 @@ nr_degs_cor <- nr_degs[
   , rbindlist(list(
       unique(.SD[, .(
         tech,
-        alpha,
         cor_type  = "Across",
         cor_value = across_cor,
         n         = across_n
       )]),
       unique(.SD[, .(
         tech,
-        alpha,
         cor_type  = a_2,
         cor_value = ancestry_cor,
         n         = ancestry_n
@@ -1548,9 +1118,7 @@ nr_degs_cor <- nr_degs[
     cor_group, 
     levels = c("Across", "Ancestry")
   )
-][
-  , alpha := alpha
-][]
+]
 
 # Plot
 main3_supp1 <- wrap_plots(
@@ -1687,23 +1255,25 @@ for (ext in formats) {
   ggsaveDK(
     plot = main3_supp1,
     file = file.path(
-      fig_dir, 
-      paste0(
-        "main3_supp1.", 
-        ext
-      )
+      fig_dir_supp, 
+      paste0("main3_supp1.", ext)
     ),
     height = 8,
     width = 16,
     trimmed = FALSE,
-    bg = "transparent",
-    dpi = 300
+    bg = "transparent"
   )
 }
 
-### Supp. 2 -------------------------------------------------------------------
+saveRDS(
+  object = main3_supp1,
+  file = file.path(
+    fig_dir_supp, 
+    "main3_supp1.rds"
+  )
+)
 
-# Plot
+### supp. 2 -------------------------------------------------------------------
 main3_supp2 <- wrap_plots(
   ggplot(
     data = effect_grps_pct$x_sum[
@@ -1817,23 +1387,25 @@ for (ext in formats) {
   ggsaveDK(
     plot = main3_supp2,
     file = file.path(
-      fig_dir, 
-      paste0(
-        "main3_supp2.", 
-        ext
-      )
+      fig_dir_supp, 
+      paste0("main3_supp2.", ext)
     ),
     height = 8,
     width = 16,
     trimmed = FALSE,
-    bg = "transparent",
-    dpi = 300
+    bg = "transparent"
   )
 }
 
-### Supp. 3 -------------------------------------------------------------------
+saveRDS(
+  object = main3_supp2,
+  file = file.path(
+    fig_dir_supp, 
+    "main3_supp2.rds"
+  )
+)
 
-# Correlation of effect sizes
+### supp. 3 -------------------------------------------------------------------
 logFC_cor <- effect_grps_pct$x_sig[
   study == "BRCA" & 
   tech == "mrna" & 
@@ -1841,17 +1413,17 @@ logFC_cor <- effect_grps_pct$x_sig[
   .(feature, effect_group)
 ][
   dcast(
-    subset_res_original[
+    limma_res[
       study == "BRCA" & 
       tech == "mrna" & 
       phenotype == "Basal vs non-Basal" & 
       coef_id == "interaction" &
-      feature %in% subset_res_original[
+      feature %in% limma_res[
         study == "BRCA" & 
         tech == "mrna" & 
         phenotype == "Basal vs non-Basal" & 
         coef_id == "interaction" & 
-        p_adj < 0.1, 
+        p_adj < target_alpha, 
         feature
       ]
     ],
@@ -1859,13 +1431,13 @@ logFC_cor <- effect_grps_pct$x_sig[
     value.var = "T_obs"
   ),
   on = "feature"
-]
+][effect_group != "Minor interaction effect", ]
 
 # Plot
 split_list <- split(logFC_cor, logFC_cor$effect_group)
 split_list <- split_list[sapply(split_list, nrow) > 0]
 
-heatmaps <- lapply(names(split_list), function(grp) {
+main3_supp3 <- lapply(names(split_list), function(grp) {
   
   sub <- split_list[[grp]]
   mat <- as.matrix(sub[, c("ADMIX", "AFR", "AMR", "EAS"), with = FALSE])
@@ -1914,24 +1486,29 @@ heatmaps <- lapply(names(split_list), function(grp) {
 # Save
 for (ext in formats) {
   save_heatmapsDK(
-    plot = heatmaps,
+    plot = main3_supp3,
     file = file.path(
-      fig_dir, 
+      fig_dir_supp, 
       paste0("main3_supp3.", ext)
     ),
     height = 9,
     width = 16,
     ncol = 2,
-    bg = "transparent",
-    dpi = 300
+    bg = "transparent"
   )
 }
 
-### Supp. 4 -------------------------------------------------------------------
+saveRDS(
+  object = main3_supp3,
+  file = file.path(
+    fig_dir_supp, 
+    "main3_supp3.rds"
+  )
+)
 
-# Nr. enriched pathways
+### supp. 4 -------------------------------------------------------------------
 main3_supp4 <- ggplot(
-  data = data_fgsea[
+  data = gsea[
     padj < 0.05,
     .(n_pathways = uniqueN(pathway)),
     by = .(tech, a_2)
@@ -1974,18 +1551,475 @@ for (ext in formats) {
   ggsaveDK(
     plot = main3_supp4,
     file = file.path(
-      fig_dir, 
-      paste0(
-        "main3_supp4.", 
-        ext
-      )
+      fig_dir_supp, 
+      paste0("main3_supp4.", ext)
     ),
     height = 7,
     width = 8,
     trimmed = FALSE,
-    bg = "transparent",
-    dpi = 300
+    bg = "transparent"
   )
 }
 
-## Reviewer Figures ===========================================================
+saveRDS(
+  object = main3_supp4,
+  file = file.path(
+    fig_dir_supp, 
+    "main3_supp4.rds"
+  )
+)
+
+
+## Supplementary Table 3 ======================================================
+### ancestry-specific genes ---------------------------------------------------
+for (t in c("mrna", "meth")) {
+
+  wb <- createWorkbook()
+  dt <- limma_res[tech == t]
+  dt[, interaction_id := paste(g_1, g_2, a_1, a_2, sep = "__")]
+
+  groups <- split(dt, dt$interaction_id)
+  for (nm in names(groups)) {
+
+    dt <- groups[[nm]]
+    dt <- dt[p_adj < target_alpha]
+
+    sheet <- paste(unique(dt$g_1), "vs",unique(dt$g_2), unique(dt$a_2), sep = "_")
+    sheet <- gsub("[\\[\\]\\*\\?/\\\\:]", "_", sheet)
+    sheet <- substr(sheet, 1, 31)
+    addWorksheet(wb, sheet)
+
+    writeData(wb, sheet = sheet, x = dt)
+  }
+
+  # Save
+  saveWorkbook(
+    wb,
+    file.path(
+      tab_dir_supp,
+      paste0("significant_genes_", t, ".xlsx")
+    ),
+    overwrite = TRUE
+  )
+}
+
+### sample number           ---------------------------------------------------
+sample_nr <- read.csv(file.path(sum_dir, "sample_n.csv"))
+names(sample_nr)[names(sample_nr) == "a_col"] <- "ancestry"
+names(sample_nr)[names(sample_nr) == "g_col"] <- "cancer"
+
+write.xlsx(sample_nr, file = file.path(tab_dir_supp, "sample_nr.xlsx"))
+
+
+
+## Review =====================================================================
+message("\nCreating review figures...")
+### save directories (review) -------------------------------------------------
+fig_dir <- file.path("results_major_review", "tcga", "figures", paste0("subset_limma_interaction_effect", "_nsubsets_", n_iter), "review")
+tab_dir <- file.path("results_major_review", "tcga", "tables", paste0("subset_limma_interaction_effect", "_nsubsets_", n_iter), "review")
+if (!dir.exists(fig_dir)) dir.create(fig_dir, recursive = TRUE)
+if (!dir.exists(tab_dir)) dir.create(tab_dir, recursive = TRUE)
+
+
+## Rerun results ==============================================================
+### res directories           -------------------------------------------------
+res_dirs <- list(
+  BRCA = file.path("results_major_review", "tcga", "analysis", "TCGA_BRCA"),
+  UCEC = file.path("results_major_review", "tcga", "analysis", "TCGA_UCEC"),
+  THCA = file.path("results_major_review", "tcga", "analysis", "TCGA_THCA")
+)
+sum_dir <- file.path("results_major_review", "tcga", "analysis", "summary", paste0("subset_limma_interaction_effect", "_nsubsets_", n_iter))
+stopifnot(length(unique(dirname(c(unlist(res_dirs), dirname(sum_dir))))) == 1)
+# Create dir
+if (!dir.exists(sum_dir)) dir.create(sum_dir, recursive = TRUE)
+
+cfg_dirs <- list(
+  BRCA = file.path("configs", "tcga", "TCGA_BRCA"),
+  UCEC = file.path("configs", "tcga", "TCGA_UCEC"),
+  THCA = file.path("configs", "tcga", "TCGA_THCA")
+)
+
+### ancestry-specific effects -------------------------------------------------
+if (!file.exists(file = file.path(sum_dir, "limma_res.rds"))) {
+
+  message("Loading 'limma_res' from individual results.")
+  limma_res <- rbindlist(lapply(names(res_dirs), function(study) {
+    fp    <- file.path(res_dirs[[study]], paste0("subset_limma_interaction_effect","_nsubsets_", n_iter))
+    files <- list.files(fp, pattern = "dge_res\\.rds$", recursive = TRUE, full.names = TRUE)
+
+    cfg <- list.files(cfg_dirs[[study]])
+    message(sprintf("%s found %d/%d files at: %s", study, length(files), length(cfg), fp))
+
+    # Load all files
+    all_files <- lapply(files, readRDS)
+    dt <- rbindlist(lapply(all_files, \(x) x$summary_stats), use.names = TRUE, fill = TRUE)
+
+    # Set phenotype
+    dt[, phenotype := fcase(
+      coef_id == "baseline_1", paste0(g_1),
+      coef_id == "baseline_2", paste0(g_2),
+      coef_id == "relationship_1", paste(g_1, "vs", g_2),
+      coef_id == "relationship_2", paste(g_1, "vs", g_2),
+      coef_id == "interaction", paste(g_1, "vs", g_2)
+    )]
+    dt[, phenotype := gsub("_", "-", phenotype)]
+    dt
+  }), fill = TRUE)
+
+  # Save
+  saveRDS(
+    object = limma_res,
+    file = file.path(
+      sum_dir,
+      "limma_res.rds"
+    )
+  )
+
+} else {
+  message("Loading 'limma_res' from: ", sum_dir)
+  limma_res <- readRDS(file = file.path(sum_dir, "limma_res.rds"))
+}
+
+
+limma_res_rerun <- limma_res
+
+## Reviewer 1 =================================================================
+### R1.07 ---------------------------------------------------------------------
+#### fig. 1 -------------------------------------------------------------------
+nr_degs_orig <- limma_res_orig[
+  tech == "meth" & coef_id == "interaction", 
+  .(nr_degs_orig = sum(p_adj < target_alpha, na.rm = TRUE)),
+  by = .(study, phenotype, tech, coef_id, a_2)
+]
+
+nr_degs_rerun <- limma_res_rerun[
+  tech == "meth" & coef_id == "interaction", 
+  .(nr_degs_rerun = sum(p_adj < target_alpha, na.rm = TRUE)), # Zählt direkt auf Gruppenebene
+  by = .(study, phenotype, tech, coef_id, a_2)
+]
+
+# Combine
+nr_degs_compare <- merge(
+  nr_degs_orig, 
+  nr_degs_rerun, 
+  by = c("study", "phenotype", "tech", "coef_id", "a_2"), 
+  all = TRUE
+)
+
+# Plot
+r1.07.1 <- ggplot(
+  data = nr_degs_compare,
+  mapping = aes(
+    x = nr_degs_orig, 
+    y = nr_degs_rerun
+    )
+  ) +
+  geom_abline(
+    intercept = 0, 
+    slope = 1, 
+    linetype = "dashed", 
+    color = "grey30", 
+    linewidth = 0.3
+  ) +
+  geom_point(
+    mapping = aes(
+      color = phenotype,
+      shape = a_2
+    )
+  ) +
+  scale_color_manual(
+    values = phenotype_cols
+  ) +
+  facet_grid(
+    cols = vars(study),
+    scales = "free"
+  ) +
+  labs(
+    x = "Nr. sig. mehtylation-sites\n(across ancestry variance filter)",
+    y = "Nr. sig. mehtylation-sites\n(wihtin ancestry variance filter)",
+    shape = "Ancestry",
+    color = "Cancer comparison"
+  ) +
+  theme_CrossAncestryGenPhen(
+    legend_key = 1,
+    show_borders = TRUE
+  )
+
+# Save
+for (ext in formats){
+  ggsaveDK(
+    plot = r1.07.1,
+    file = file.path(
+      fig_dir, 
+      paste0("r1.07.1.", ext)
+    ),
+    height = 6,
+    width = 16,
+    trimmed = FALSE,
+    bg = "transparent"
+  )
+}
+
+saveRDS(
+  object = r1.07.1,
+  file = file.path(
+    fig_dir, 
+    "r1.07.1.rds"
+  )
+)
+
+#### fig. 2 -------------------------------------------------------------------
+gsea_orig <- rbindlist(
+  limma_res_orig[
+    coef_id == "interaction" & 
+    tech == "meth"
+  ][
+    tech == "meth",
+    feature := tstrsplit(
+      probe2gene[.SD, on = "feature", gene],
+      ";",
+      fixed = TRUE,
+      keep = 1L
+    )
+  ][
+    feature %in% term2gene$gene_symbol
+  ][,
+    {
+
+      # Ranking features by logFC
+      ranks <- setNames(T_obs, feature)
+      ranks <- ranks[!duplicated(names(ranks))]
+      ranks <- ranks[!is.na(names(ranks))]
+
+      # Sort decreasing (required)
+      ranks <- sort(ranks, decreasing = TRUE)
+
+      meta <- .SD[1, .(study, phenotype, tech, a_2)]
+      res  <- FGSEA(
+        ranks = ranks,
+        metadata = meta,
+        pathways = fgsea_pathways
+      )
+
+      .(res = list(res))
+
+    },
+    by = .(study, phenotype, tech, a_2)
+  ][["res"]]
+)
+
+gsea_rerun <- rbindlist(
+  limma_res_rerun[
+    coef_id == "interaction" & 
+    tech == "meth"
+  ][
+    tech == "meth",
+    feature := tstrsplit(
+      probe2gene[.SD, on = "feature", gene],
+      ";",
+      fixed = TRUE,
+      keep = 1L
+    )
+  ][
+    feature %in% term2gene$gene_symbol
+  ][,
+    {
+
+      # Ranking features by logFC
+      ranks <- setNames(T_obs, feature)
+      ranks <- ranks[!duplicated(names(ranks))]
+      ranks <- ranks[!is.na(names(ranks))]
+
+      # Sort decreasing (required)
+      ranks <- sort(ranks, decreasing = TRUE)
+
+      meta <- .SD[1, .(study, phenotype, tech, a_2)]
+      res  <- FGSEA(
+        ranks = ranks,
+        metadata = meta,
+        pathways = fgsea_pathways
+      )
+
+      .(res = list(res))
+
+    },
+    by = .(study, phenotype, tech, a_2)
+  ][["res"]]
+)
+
+# Combine
+gsea_compare <- merge(
+  gsea_orig,
+  gsea_rerun,
+  by = c("pathway", "study", "phenotype", "tech", "a_2"),
+  suffixes = c("_orig", "_rerun"),
+  all = TRUE
+)
+
+# Nr. sig. pathways
+nr_pathways_orig <- gsea_compare[,
+  .(nr_pathways_orig = sum(padj_orig < 0.05, na.rm = TRUE)),
+  by = .(study, phenotype, tech, a_2)
+]
+
+nr_pathways_rerun <- gsea_compare[, 
+  .(nr_pathways_rerun = sum(padj_rerun < 0.05, na.rm = TRUE)),
+  by = .(study, phenotype, tech, a_2)
+]
+
+nr_pathways_compare <- merge(
+  nr_pathways_orig, 
+  nr_pathways_rerun, 
+  by = c("study", "phenotype", "tech", "a_2"), 
+  all = TRUE
+)
+
+# Correlation
+gsea_corr <- gsea_compare[, {
+  complete_pairs <- !is.na(NES_orig) & !is.na(NES_rerun)
+  
+  if (sum(complete_pairs) >= 3) {
+    res_cor <- cor(NES_orig[complete_pairs], NES_rerun[complete_pairs], method = "pearson")
+  } else {
+    res_cor <- NA_real_
+  }
+  .(corr = res_cor)
+}, by = .(study, phenotype, a_2)
+][, group_label := paste0(phenotype, " (", a_2, ")")]
+
+# Plot
+r1.07.2 <- wrap_plots(
+  ggplot(
+    data = nr_pathways_compare,
+    mapping = aes(
+      x = nr_pathways_orig, 
+      y = nr_pathways_rerun
+    )
+  ) +
+  geom_abline(
+    intercept = 0, 
+    slope = 1, 
+    linetype = "dashed", 
+    color = "grey30", 
+    linewidth = 0.3
+  ) +
+  geom_point(
+    mapping = aes(
+      color = phenotype,
+      shape = a_2
+    )
+  ) +
+  scale_color_manual(
+    values = phenotype_cols
+  ) +
+  scale_x_continuous(
+    breaks = scales::pretty_breaks(n = 4)
+  ) +
+  scale_y_continuous(
+    breaks = scales::pretty_breaks(n = 4)
+  ) +
+  facet_grid(
+    cols = vars(study)
+  ) +
+  labs(
+    x = "Nr. sig. pathways\n(across ancestry variance filter)",
+    y = "Nr. sig. pathways\n(within ancestry variance filter)",
+    shape = "Ancestry",
+    color = "Cancer comparison"
+  ) +
+  theme_CrossAncestryGenPhen(
+    legend_key = 1,
+    show_borders = TRUE
+  ) +
+  theme(
+    panel.spacing.x = unit(0.15, "lines"),
+    panel.spacing.y = unit(0.15, "lines"),
+    legend.spacing.y = unit(10, "pt"),
+    legend.margin = margin(0, 0, 0, 0)
+  ),
+  ggplot(
+    mapping = aes(
+      x = a_2, 
+      y = phenotype
+    )
+  ) +
+  geom_tile(
+    data = gsea_corr[!is.na(corr)],
+    mapping = aes(
+      fill = corr
+    ),
+    color = "black", 
+    linewidth = 0.1
+  ) +
+  scale_fill_gradient2(
+    name = "Pearson correlation\nof NES scores",
+    low = "blue",
+    mid = "white",
+    high = "red",
+    midpoint = 0
+  ) +
+  ggnewscale::new_scale_fill() +
+  geom_tile(
+    data = gsea_corr[is.na(corr)],
+    mapping = aes(
+      fill = "Comp. not available in both"
+    ),
+    color = "black", 
+    linewidth = 0.1
+  ) +
+  scale_fill_manual(
+    name = NULL,
+    values = c(
+      "Comp. not available in both" = "grey90"
+    )
+  ) + 
+  facet_grid(
+    rows = vars(study),
+    scales = "free_y",
+    space = "free_y"
+  ) +
+  labs(
+    x = "Ancestry",
+    y = "Cancer comparison"
+  ) +
+  theme_CrossAncestryGenPhen(
+    rotate = 45,
+    legend_key = 1,
+    show_borders = TRUE
+  ) +
+  theme(
+    panel.spacing.x = unit(0.15, "lines"),
+    panel.spacing.y = unit(0.15, "lines"),
+    legend.spacing.y = unit(10, "pt"),
+    legend.margin = margin(0, 0, 0, 0)
+  ),
+  ncol = 2
+) + 
+plot_layout(widths = c(1, 0.5)) +
+plot_annotation(tag_levels = "a") &
+theme(
+  plot.tag = element_text(size = 10, face = "bold")
+)
+
+# Save
+for (ext in formats){
+  ggsaveDK(
+    plot = r1.07.2,
+    file = file.path(
+      fig_dir, 
+      paste0("r1.07.2.", ext)
+    ),
+    height = 6,
+    width = 16,
+    trimmed = FALSE,
+    bg = "transparent"
+  )
+}
+
+saveRDS(
+  object = r1.07.2,
+  file = file.path(
+    fig_dir, 
+    "r1.07.2.rds"
+  )
+)

@@ -81,7 +81,7 @@ sim_grid <- setDT(
     between_ratio = c(1, 5, 10),
     within_ratio = c(1, 5, 10),
     zero_rules = TRUE,  # Only run one negative control simulation (don't expand grid where n_degs = 0 to more then one row)
-    verbose = TRUE   
+    verbose = FALSE   
   )
 )
 

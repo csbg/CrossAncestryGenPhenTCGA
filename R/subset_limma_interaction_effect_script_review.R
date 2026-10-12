@@ -1,10 +1,13 @@
 ## max. code width ============================================================
+
+
 ## Libraries ==================================================================
-suppressPackageStartupMessages(
-  {
-    library(CrossAncestryGenPhen)
-  }
-)
+suppressPackageStartupMessages({
+  library(CrossAncestryGenPhen)
+})
+
+## utils.R ====================================================================
+source("R/utils.R")
 
 ## Configs ====================================================================
 configs <- list.files(
@@ -15,10 +18,12 @@ configs <- list.files(
 )
 
 ## Parameters =================================================================
-seed <- 42
+seed   <- 42
+n_iter <- 20
 
 # Parallel env.
 future::plan(future::multisession, workers = 2)
+
 
 ## Loop: Ancestry-cancer combination ==========================================
 all_n_list <- list()
@@ -35,9 +40,10 @@ for (config_file in configs) {
   )
 
   # Output directory
+  out_dir <- sub("^results", "results_major_review", cfg$out_dir)
   out_dir <- file.path(
-    cfg$out_dir, 
-    "subset_interaction_effect", 
+    out_dir, 
+    paste0("subset_limma_interaction_effect_nsubsets_", n_iter), 
     comp
   )
 
@@ -107,8 +113,11 @@ for (config_file in configs) {
 
   n_X <- .get_n(meta = data$X$meta, g_col = cfg$g_col, a_col = cfg$a_col)
   n_Y <- .get_n(meta = data$Y$meta, g_col = cfg$g_col, a_col = cfg$a_col)
+  if (min(n_X$n) < 2 || min(n_Y$n) < 2) {
+    next
+  }
   final_n <- rbind(n_X, n_Y)
-  
+
   # Add meta
   final_n$study <- cfg$study
   final_n$tech  <- cfg$tech
@@ -144,7 +153,7 @@ for (config_file in configs) {
       MY = data$Y$meta,
       g_col = cfg$g_col,
       a_col = cfg$a_col,
-      any_group = FALSE,
+      any_group = TRUE, # R1.07: Retain methylation sites based on variance within ancestry.
       verbose = FALSE,
       plot = FALSE
     )
@@ -206,12 +215,13 @@ for (config_file in configs) {
     MY = data$Y$meta,
     g_col = cfg$g_col,
     a_col = cfg$a_col,
+    match = FALSE, # R1.09: Handles imbalances wihin cancer.
     covariates = unlist(cfg$covariates),
     use_voom = if (cfg$tech == "mrna") TRUE else FALSE,
     method = "cct",
-    n_iter = 10,
+    n_iter = n_iter,
     seed = seed,
-    verbose = TRUE
+    verbose = FALSE
   )
 
   res$summary_stats$method <- "subset-cct"
@@ -222,19 +232,19 @@ for (config_file in configs) {
   saveRDS(res, file = result_file)
 }
 
-# Summary
+## Summary ====================================================================
 if (length(all_n_list) > 0) {
   
   all_n   <- do.call(rbind, all_n_list)
 
-  out_dir <- file.path("results/tcga/analysis/summary_subset_interaction_effect")
+  out_dir <- file.path("results_major_review","tcga", "analysis", "summary", paste0("subset_limma_interaction_effect_nsubsets_", n_iter))
   if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
   
   write.csv(
     all_n,
     file = file.path(
       out_dir,
-      "summary_sample_n.csv"
+      "sample_n.csv"
     ), 
     row.names = FALSE
   )

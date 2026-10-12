@@ -5,6 +5,7 @@
 
 # R settings
 .Rprofile
+.Renviron
 
 # Lib. managers
 .pixi/
@@ -12,11 +13,11 @@
 
 pixi.lock
 
-# Data dirs
-download/
-results/
-results_major_review/
-intern/
+# Sym. links
+download
+results
+results_major_review
 
 # Extra dirs
 bash/
+sge/
